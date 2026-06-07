@@ -2,11 +2,16 @@
 # -*- coding: utf-8 -*-
 """
 ========================================================================
-   Servicetop OpenRC Manager v3
+   Servicetop OpenRC Manager v3.1 (Colorized Edition)
+   Repository: https://github.com/PEAKT0P/servicetop.py
 ========================================================================
-   Quick setup:
-   $ sudo ln -s /opt/servicetop/servicetop.py /usr/local/bin/servicetop
-   
+   Update/Install:
+   $ sudo rm -f /opt/servicetop/lang.json
+   $ sudo mkdir -p /opt/servicetop/
+   $ sudo curl -o /opt/servicetop/servicetop.py https://raw.githubusercontent.com/PEAKT0P/servicetop.py/main/servicetop.py
+   $ sudo chmod +x /opt/servicetop/servicetop.py
+   $ sudo ln -sf /opt/servicetop/servicetop.py /usr/local/bin/servicetop
+
    Usage:
    $ sudo servicetop
 ========================================================================
@@ -17,11 +22,16 @@ import subprocess
 import os
 import sys
 import json
+import re
 
 # Рабочая директория
 BASE_DIR = "/opt/servicetop"
 FAV_FILE = os.path.join(BASE_DIR, "favorites.list")
 LANG_FILE = os.path.join(BASE_DIR, "lang.json")
+
+# Регулярки для раскраски логов и очистки от ANSI-кодов
+TOKEN_RE = re.compile(r'(\[\s*ok\s*\]|\[\s*!!\s*\]|\[\s*fail\s*\]|Ошибка:|Успешно:|Выполняю:|\s\*\s)')
+ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
 # Проверка на root
 if os.geteuid() != 0:
@@ -31,7 +41,7 @@ if os.geteuid() != 0:
 # Создаем папку, если вдруг ее нет
 os.makedirs(BASE_DIR, exist_ok=True)
 
-# Базовый словарь (сохранится в lang.json при первом запуске)
+# Базовый словарь
 DEFAULT_LANG_DATA = {
     "current_lang": "ru",
     "ru": {
@@ -96,7 +106,7 @@ def load_language():
         except:
             pass
         return DEFAULT_LANG_DATA["ru"]
-    
+
     try:
         with open(LANG_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -126,7 +136,7 @@ def save_favorites(favs):
 
 def get_services(favs):
     services = []
-    
+
     status_out = subprocess.getoutput("rc-status -a").split('\n')
     status_map = {}
     for line in status_out:
@@ -159,8 +169,8 @@ def get_services(favs):
             runlevel = runlevel_map.get(file, "")
             is_fav = file in favs
             services.append({
-                "name": file, 
-                "status": status, 
+                "name": file,
+                "status": status,
                 "runlevel": runlevel,
                 "is_fav": is_fav
             })
@@ -172,9 +182,38 @@ def execute_command(cmd):
     try:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
         output = result.stdout.strip() + " " + result.stderr.strip()
+        # Вырезаем ANSI коды, если утилита их прокинула, чтобы не ломать curses
+        output = ANSI_ESCAPE.sub('', output)
         return output if output else f"Успешно: {cmd}"
     except Exception as e:
         return f"Ошибка: {e}"
+
+def draw_colorized_log(stdscr, y, x, msg, max_w):
+    """Отрисовка логов с подсветкой синтаксиса в стиле Gentoo OpenRC."""
+    safe_msg = msg.replace('\n', '  ')
+    if len(safe_msg) > max_w - 4:
+        safe_msg = safe_msg[:max_w - 7] + "..."
+
+    tokens = TOKEN_RE.split(safe_msg)
+    curr_x = x
+    for token in tokens:
+        if not token: continue
+
+        attr = curses.color_pair(6) # По умолчанию белый
+        
+        # Точное совпадение по маркерам
+        if re.fullmatch(r'\[\s*ok\s*\]|Успешно:|\s\*\s', token):
+            attr = curses.color_pair(1) | curses.A_BOLD  # Зеленый
+        elif re.fullmatch(r'\[\s*!!\s*\]|\[\s*fail\s*\]|Ошибка:', token):
+            attr = curses.color_pair(2) | curses.A_BOLD  # Красный
+        elif re.fullmatch(r'Выполняю:', token):
+            attr = curses.color_pair(4) | curses.A_BOLD  # Циан
+
+        try:
+            stdscr.addstr(y, curr_x, token, attr)
+            curr_x += len(token)
+        except curses.error:
+            break
 
 def show_action_menu(stdscr, service):
     h, w = stdscr.getmaxyx()
@@ -195,12 +234,12 @@ def show_action_menu(stdscr, service):
         (L['act_add_auto'], "CMD", f"rc-update add {service['name']} default"),
         (L['act_del_auto'], "CMD", f"rc-update del {service['name']} default"),
     ]
-    
+
     if service['is_fav']:
         actions.append((L['act_del_fav'], "FAV_DEL", service['name']))
     else:
         actions.append((L['act_add_fav'], "FAV_ADD", service['name']))
-        
+
     actions.append((L['act_cancel'], "CANCEL", ""))
 
     sel_idx = 0
@@ -241,69 +280,73 @@ def main(stdscr):
 
     curses.start_color()
     curses.use_default_colors()
-    curses.init_pair(1, curses.COLOR_GREEN, -1)   
-    curses.init_pair(2, curses.COLOR_RED, -1)     
-    curses.init_pair(3, curses.COLOR_YELLOW, -1)  
-    curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_CYAN) 
-    curses.init_pair(5, curses.COLOR_WHITE, curses.COLOR_BLUE) 
-    curses.init_pair(6, curses.COLOR_WHITE, -1)   
+    curses.init_pair(1, curses.COLOR_GREEN, -1)
+    curses.init_pair(2, curses.COLOR_RED, -1)
+    curses.init_pair(3, curses.COLOR_YELLOW, -1)
+    curses.init_pair(4, curses.COLOR_CYAN, -1)     # Для выделений и Выполняю:
+    curses.init_pair(5, curses.COLOR_WHITE, curses.COLOR_BLUE)
+    curses.init_pair(6, curses.COLOR_WHITE, -1)    # Базовый белый
 
     favs = get_favorites()
     services = get_services(favs)
     sel_idx = 0
     log_messages = [L['msg_welcome']]
+    
+    # Флаги отложенного выполнения, чтобы успевать перерисовать интерфейс и убрать меню
+    pending_action = None
+    pending_payload = None
 
     while True:
-        stdscr.erase() # Используем erase() вместо clear() для устранения мерцания
+        stdscr.erase()
         h, w = stdscr.getmaxyx()
         max_w = w - 1
 
-        if h < 16 or max_w < 70:
+        if h < 18 or max_w < 70:
             stdscr.addstr(0, 0, L['err_small'])
             stdscr.refresh()
             stdscr.getch()
             break
 
-        # Динамическая ширина (2 колонки, если ширина >= 135)
         col_count = 2 if max_w >= 135 else 1
         col_w = max_w // col_count
 
         # Шапка
         stdscr.addstr(0, 0, L['title'].center(max_w), curses.color_pair(4) | curses.A_BOLD)
-        
+
         header_str = f"{L['col_service'].ljust(32)} {L['col_status'].ljust(15)} {L['col_autorun']}"
         if col_count == 2:
             stdscr.addstr(1, 2, header_str[:col_w - 4], curses.A_BOLD)
             stdscr.addstr(1, 2 + col_w, header_str[:col_w - 4], curses.A_BOLD)
         else:
             stdscr.addstr(1, 2, header_str, curses.A_BOLD)
-            
+
         stdscr.addstr(2, 0, "-" * max_w)
 
-        # Вычисление области списка
+        # Вычисление области списка и логов (динамически 9 строк, если терминал достаточно большой)
+        log_lines_count = 9 if h >= 24 else 5
+        bottom_h = log_lines_count + 3
         list_start_y = 3
-        list_h = h - 11 
+        list_h = h - list_start_y - bottom_h
         items_per_page = list_h * col_count
 
-        # Логика страничной прокрутки
         current_page = sel_idx // items_per_page
         scroll_offset = current_page * items_per_page
 
-        # Отрисовка списка (сверху вниз, слева направо)
+        # Отрисовка списка
         for i in range(items_per_page):
             idx = scroll_offset + i
             if idx >= len(services):
                 break
 
             svc = services[idx]
-            
+
             if col_count == 2:
                 row_idx = i % list_h
                 col_idx = i // list_h
             else:
                 row_idx = i
                 col_idx = 0
-                
+
             y = list_start_y + row_idx
             x_offset = col_idx * col_w
 
@@ -317,11 +360,12 @@ def main(stdscr):
             safe_status = svc['status'][:13]
             safe_runlevel = svc['runlevel'][:15]
 
+            # Отрисовка строки сервиса
             if idx == sel_idx:
-                stdscr.addstr(y, x_offset, " " * (col_w - 1), curses.color_pair(4))
-                stdscr.addstr(y, x_offset + 2, safe_name.ljust(32), curses.color_pair(4) | curses.A_BOLD)
-                stdscr.addstr(y, x_offset + 35, safe_status.ljust(15), curses.color_pair(4))
-                stdscr.addstr(y, x_offset + 51, safe_runlevel, curses.color_pair(4))
+                stdscr.addstr(y, x_offset, " " * (col_w - 1), curses.color_pair(4) | curses.A_REVERSE)
+                stdscr.addstr(y, x_offset + 2, safe_name.ljust(32), curses.color_pair(4) | curses.A_REVERSE | curses.A_BOLD)
+                stdscr.addstr(y, x_offset + 35, safe_status.ljust(15), curses.color_pair(4) | curses.A_REVERSE)
+                stdscr.addstr(y, x_offset + 51, safe_runlevel, curses.color_pair(4) | curses.A_REVERSE)
             else:
                 name_color = curses.color_pair(3) | curses.A_BOLD if svc['is_fav'] else curses.color_pair(6)
                 stdscr.addstr(y, x_offset + 2, safe_name.ljust(32), name_color)
@@ -329,20 +373,38 @@ def main(stdscr):
                 stdscr.addstr(y, x_offset + 51, safe_runlevel, curses.color_pair(3))
 
         # Окно логов
-        stdscr.addstr(h-8, 0, "-" * max_w)
-        stdscr.addstr(h-7, 2, L['log_title'], curses.A_BOLD)
+        stdscr.addstr(h - bottom_h, 0, "-" * max_w)
+        stdscr.addstr(h - bottom_h + 1, 2, L['log_title'], curses.A_BOLD | curses.color_pair(6))
 
-        for idx, log_msg in enumerate(log_messages[-5:]):
-            safe_msg = log_msg[:max_w-4].replace('\n', ' ')
-            stdscr.addstr(h-6+idx, 2, safe_msg, curses.color_pair(3))
+        for idx, log_msg in enumerate(log_messages[-log_lines_count:]):
+            draw_colorized_log(stdscr, h - bottom_h + 2 + idx, 2, log_msg, max_w)
 
         # Подсказки внизу
         try:
-            stdscr.addstr(h-1, 0, L['bottom_hint'].center(max_w), curses.color_pair(4))
+            stdscr.addstr(h - 1, 0, L['bottom_hint'].center(max_w), curses.color_pair(4))
         except curses.error:
             pass
 
         stdscr.refresh()
+
+        # Выполнение отложенной команды ПОСЛЕ перерисовки интерфейса (чтобы скрыть меню)
+        if pending_action:
+            if pending_action == "CMD":
+                res = execute_command(pending_payload)
+                log_messages.append(res)
+            elif pending_action == "PID":
+                cmds = [
+                    f"rm -f /run/{pending_payload}.pid",
+                    f"rm -f /var/run/{pending_payload}.pid",
+                    f"rm -rf /run/openrc/daemons/{pending_payload}"
+                ]
+                execute_command("; ".join(cmds))
+                log_messages.append(L['msg_pid_del'].format(pending_payload))
+
+            pending_action = None
+            pending_payload = None
+            services = get_services(favs)
+            continue # Перерисовываем интерфейс с результатом команды
 
         key = stdscr.getch()
 
@@ -352,14 +414,14 @@ def main(stdscr):
             sel_idx -= 1
         elif key == curses.KEY_DOWN and sel_idx < len(services) - 1:
             sel_idx += 1
-        elif key == curses.KEY_NPAGE: 
+        elif key == curses.KEY_NPAGE:
             sel_idx = min(len(services) - 1, sel_idx + items_per_page)
-        elif key == curses.KEY_PPAGE: 
+        elif key == curses.KEY_PPAGE:
             sel_idx = max(0, sel_idx - items_per_page)
         elif key in (ord('r'), ord('R')):
             log_messages.append(L['msg_refresh'])
             services = get_services(favs)
-        elif key in (ord('f'), ord('F')): # Горячая клавиша добавления в избранное
+        elif key in (ord('f'), ord('F')):
             if services:
                 svc = services[sel_idx]
                 if svc['is_fav']:
@@ -373,30 +435,25 @@ def main(stdscr):
         elif key in [curses.KEY_ENTER, 10, 13]:
             if not services: continue
             action_type, payload = show_action_menu(stdscr, services[sel_idx])
-            
-            if action_type == "CMD":
-                log_messages.append(L['msg_exec'].format(payload))
-                stdscr.refresh()
-                res = execute_command(payload)
-                log_messages.append(res)
-            elif action_type == "PID":
-                cmds = [
-                    f"rm -f /run/{payload}.pid",
-                    f"rm -f /var/run/{payload}.pid",
-                    f"rm -rf /run/openrc/daemons/{payload}"
-                ]
-                execute_command("; ".join(cmds))
-                log_messages.append(L['msg_pid_del'].format(payload))
+
+            if action_type in ("CMD", "PID"):
+                if action_type == "CMD":
+                    log_messages.append(L['msg_exec'].format(payload))
+                # Откладываем выполнение, чтобы интерфейс успел обновиться
+                pending_action = action_type
+                pending_payload = payload
+                continue
+
             elif action_type == "FAV_ADD":
                 favs.add(payload)
                 save_favorites(favs)
                 log_messages.append(L['msg_fav_add'].format(payload))
+                services = get_services(favs)
             elif action_type == "FAV_DEL":
                 favs.discard(payload)
                 save_favorites(favs)
                 log_messages.append(L['msg_fav_del'].format(payload))
-            
-            services = get_services(favs) 
+                services = get_services(favs)
 
         elif key == curses.KEY_MOUSE:
             try:
@@ -404,42 +461,36 @@ def main(stdscr):
                 if list_start_y <= my < list_start_y + list_h:
                     row = my - list_start_y
                     col = mx // col_w
-                    
+
                     if col < col_count:
                         if col_count == 2:
                             clicked_idx = scroll_offset + (col * list_h) + row
                         else:
                             clicked_idx = scroll_offset + row
-                            
+
                         if clicked_idx < len(services):
                             if sel_idx != clicked_idx:
                                 sel_idx = clicked_idx
                             elif bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED | curses.BUTTON1_PRESSED):
                                 action_type, payload = show_action_menu(stdscr, services[sel_idx])
-                                
-                                if action_type == "CMD":
-                                    log_messages.append(L['msg_exec'].format(payload))
-                                    stdscr.refresh()
-                                    res = execute_command(payload)
-                                    log_messages.append(res)
-                                elif action_type == "PID":
-                                    cmds = [
-                                        f"rm -f /run/{payload}.pid",
-                                        f"rm -f /var/run/{payload}.pid",
-                                        f"rm -rf /run/openrc/daemons/{payload}"
-                                    ]
-                                    execute_command("; ".join(cmds))
-                                    log_messages.append(L['msg_pid_del'].format(payload))
+
+                                if action_type in ("CMD", "PID"):
+                                    if action_type == "CMD":
+                                        log_messages.append(L['msg_exec'].format(payload))
+                                    pending_action = action_type
+                                    pending_payload = payload
+                                    continue
+
                                 elif action_type == "FAV_ADD":
                                     favs.add(payload)
                                     save_favorites(favs)
                                     log_messages.append(L['msg_fav_add'].format(payload))
+                                    services = get_services(favs)
                                 elif action_type == "FAV_DEL":
                                     favs.discard(payload)
                                     save_favorites(favs)
                                     log_messages.append(L['msg_fav_del'].format(payload))
-                                    
-                                services = get_services(favs)
+                                    services = get_services(favs)
             except curses.error:
                 pass
 
