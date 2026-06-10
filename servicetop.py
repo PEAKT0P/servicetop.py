@@ -14,6 +14,8 @@
 
    Usage:
    $ sudo servicetop
+   Servicetop OpenRC Manager v4.0 (Advanced Edition)
+   Repository: https://github.com/PEAKT0P/servicetop.py
 ========================================================================
 """
 
@@ -23,34 +25,35 @@ import os
 import sys
 import json
 import re
+import time
 
 # Рабочая директория
 BASE_DIR = "/opt/servicetop"
 FAV_FILE = os.path.join(BASE_DIR, "favorites.list")
+BLACKLIST_FILE = os.path.join(BASE_DIR, "blacklist.list")
+PRIO_FILE = os.path.join(BASE_DIR, "priority.json")
 LANG_FILE = os.path.join(BASE_DIR, "lang.json")
 
-# Регулярки для раскраски логов и очистки от ANSI-кодов
+# Регулярки для раскраски логов и очистки
 TOKEN_RE = re.compile(r'(\[\s*ok\s*\]|\[\s*!!\s*\]|\[\s*fail\s*\]|Ошибка:|Успешно:|Выполняю:|\s\*\s)')
 ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
-# Проверка на root
 if os.geteuid() != 0:
     print("Ошибка: servicetop должен запускаться от root!")
     sys.exit(1)
 
-# Создаем папку, если вдруг ее нет
 os.makedirs(BASE_DIR, exist_ok=True)
 
-# Базовый словарь
 DEFAULT_LANG_DATA = {
     "current_lang": "ru",
     "ru": {
         "title": " Servicetop (Gentoo/OpenRC) ",
+        "top_title": " TOP-4 ПРОЦЕССА (CPU/MEM): ",
         "col_service": "СЕРВИС",
         "col_status": "СТАТУС",
         "col_autorun": "АВТОЗАПУСК",
         "log_title": "Лог действий:",
-        "bottom_hint": " [Клик] Выбор  [Enter] Меню  [F] Избранное  [PgUp/Dn] Прокрутка  [R] Обновить  [Q] Выход ",
+        "bottom_hint": " [ЛКМ] Меню [PgUp/Dn] Шаг 5 [F] Избранное [P] Приоритет [B] Blacklist [L] Показать все [Q] Выход ",
         "act_start": "Start (Запуск)",
         "act_stop": "Stop (Остановка)",
         "act_restart": "Restart (Перезапуск)",
@@ -58,43 +61,17 @@ DEFAULT_LANG_DATA = {
         "act_pid": "Удалить PID (Форс. очистка)",
         "act_add_auto": "Добавить в автозапуск",
         "act_del_auto": "Удалить из автозапуска",
-        "act_add_fav": "Добавить в избранное [★]",
-        "act_del_fav": "Убрать из избранного",
         "act_cancel": "Отмена",
         "menu_title": " Управление: {} ",
         "msg_welcome": "Добро пожаловать в ServiceTop! Сбор данных завершен.",
         "msg_refresh": "Обновление списка сервисов...",
         "msg_exec": "Выполняю: {}",
         "msg_pid_del": "PID файлы для {} удалены.",
-        "msg_fav_add": "{} добавлен в избранное.",
-        "msg_fav_del": "{} удален из избранного.",
+        "msg_fav": "Статус Избранного для {} изменен.",
+        "msg_bl": "Статус Blacklist для {} изменен.",
+        "msg_prio": "Приоритет {} изменен.",
+        "msg_bl_mode": "Режим отображения Blacklist: {}",
         "err_small": "Окно терминала слишком маленькое!"
-    },
-    "en": {
-        "title": " Servicetop (Gentoo/OpenRC) ",
-        "col_service": "SERVICE",
-        "col_status": "STATUS",
-        "col_autorun": "AUTORUN",
-        "log_title": "Action Log:",
-        "bottom_hint": " [Click] Select  [Enter] Menu  [F] Favorite  [PgUp/Dn] Scroll  [R] Refresh  [Q] Quit ",
-        "act_start": "Start",
-        "act_stop": "Stop",
-        "act_restart": "Restart",
-        "act_zap": "ZAP (Reset status)",
-        "act_pid": "Delete PID (Force clean)",
-        "act_add_auto": "Add to autorun",
-        "act_del_auto": "Remove from autorun",
-        "act_add_fav": "Add to Favorites [★]",
-        "act_del_fav": "Remove from Favorites",
-        "act_cancel": "Cancel",
-        "menu_title": " Manage: {} ",
-        "msg_welcome": "Welcome to ServiceTop! Data collection complete.",
-        "msg_refresh": "Refreshing service list...",
-        "msg_exec": "Executing: {}",
-        "msg_pid_del": "PID files for {} deleted.",
-        "msg_fav_add": "{} added to favorites.",
-        "msg_fav_del": "{} removed from favorites.",
-        "err_small": "Terminal window is too small!"
     }
 }
 
@@ -103,40 +80,53 @@ def load_language():
         try:
             with open(LANG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(DEFAULT_LANG_DATA, f, indent=4, ensure_ascii=False)
-        except:
-            pass
+        except: pass
         return DEFAULT_LANG_DATA["ru"]
-
     try:
         with open(LANG_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            lang_code = data.get("current_lang", "ru")
-            return data.get(lang_code, DEFAULT_LANG_DATA["ru"])
+            return data.get(data.get("current_lang", "ru"), DEFAULT_LANG_DATA["ru"])
     except:
         return DEFAULT_LANG_DATA["ru"]
 
 L = load_language()
 
-def get_favorites():
-    if not os.path.exists(FAV_FILE):
-        return set()
+# --- Вспомогательные функции для работы с файлами ---
+def get_list(filepath):
+    if not os.path.exists(filepath): return set()
     try:
-        with open(FAV_FILE, 'r') as f:
+        with open(filepath, 'r') as f:
             return set(line.strip() for line in f if line.strip())
-    except:
-        return set()
+    except: return set()
 
-def save_favorites(favs):
+def save_list(filepath, items):
     try:
-        with open(FAV_FILE, 'w') as f:
-            for fav in sorted(list(favs)):
-                f.write(f"{fav}\n")
+        with open(filepath, 'w') as f:
+            for item in sorted(list(items)): f.write(f"{item}\n")
+    except: pass
+
+def get_dict(filepath):
+    if not os.path.exists(filepath): return {}
+    try:
+        with open(filepath, 'r') as f: return json.load(f)
+    except: return {}
+
+def save_dict(filepath, data):
+    try:
+        with open(filepath, 'w') as f: json.dump(data, f, indent=4)
+    except: pass
+
+# --- Системные функции ---
+def get_top_processes():
+    try:
+        # pid, %cpu, %mem, command
+        out = subprocess.getoutput("ps -eo pid,pcpu,pmem,comm --sort=-pcpu | head -n 5").split('\n')
+        return out
     except:
-        pass
+        return []
 
-def get_services(favs):
+def get_services(favs, bl_set, prio_dict, show_blacklist):
     services = []
-
     status_out = subprocess.getoutput("rc-status -a").split('\n')
     status_map = {}
     for line in status_out:
@@ -146,50 +136,58 @@ def get_services(favs):
                 name = parts[0]
                 try:
                     state_idx = parts.index('[') + 1
-                    state = parts[state_idx]
-                except ValueError:
-                    state = "unknown"
-                status_map[name] = state
+                    status_map[name] = parts[state_idx]
+                except ValueError: pass
 
     rc_update_out = subprocess.getoutput("rc-update show").split('\n')
     runlevel_map = {}
     for line in rc_update_out:
         if '|' in line:
             parts = line.split('|')
-            name = parts[0].strip()
-            rl = parts[1].strip()
-            runlevel_map[name] = rl
+            runlevel_map[parts[0].strip()] = parts[1].strip()
 
     for file in sorted(os.listdir('/etc/init.d/')):
-        if file in ['functions.sh', 'net.lo'] or file.startswith('.'):
-            continue
+        if file in ['functions.sh', 'net.lo'] or file.startswith('.'): continue
         filepath = os.path.join('/etc/init.d/', file)
+        
         if os.path.isfile(filepath) and os.access(filepath, os.X_OK):
-            status = status_map.get(file, "stopped")
-            runlevel = runlevel_map.get(file, "")
             is_fav = file in favs
+            is_bl = file in bl_set
+            prio = prio_dict.get(file, 0)
+            
+            # Пропускаем, если сервис в blacklist и режим отображения скрыт (но избранные показываем всегда)
+            if is_bl and not show_blacklist and not is_fav:
+                continue
+                
             services.append({
                 "name": file,
-                "status": status,
-                "runlevel": runlevel,
-                "is_fav": is_fav
+                "status": status_map.get(file, "stopped"),
+                "runlevel": runlevel_map.get(file, ""),
+                "is_fav": is_fav,
+                "is_bl": is_bl,
+                "priority": prio
             })
 
-    services.sort(key=lambda x: (not x['is_fav'], x['name']))
+    # Сортировка: Избранное -> Приоритет(Высокий=1, Обычный=0, Низкий=-1) -> Имя
+    services.sort(key=lambda x: (not x['is_fav'], -x['priority'], x['name']))
     return services
+
+def fix_openrc_logs(text):
+    """ Разделяет склеенные логи OpenRC на новые строки (напр: [ ok ] * samba...) """
+    # Заменяем пробел перед звездочкой на перенос строки, если перед этим был статус
+    return re.sub(r'(\[\s*(?:ok|!!|fail)\s*\])\s*(?=\*)', r'\1\n', text)
 
 def execute_command(cmd):
     try:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
         output = result.stdout.strip() + " " + result.stderr.strip()
-        # Вырезаем ANSI коды, если утилита их прокинула, чтобы не ломать curses
         output = ANSI_ESCAPE.sub('', output)
+        output = fix_openrc_logs(output)
         return output if output else f"Успешно: {cmd}"
     except Exception as e:
         return f"Ошибка: {e}"
 
 def draw_colorized_log(stdscr, y, x, msg, max_w):
-    """Отрисовка логов с подсветкой синтаксиса в стиле Gentoo OpenRC."""
     safe_msg = msg.replace('\n', '  ')
     if len(safe_msg) > max_w - 4:
         safe_msg = safe_msg[:max_w - 7] + "..."
@@ -198,26 +196,19 @@ def draw_colorized_log(stdscr, y, x, msg, max_w):
     curr_x = x
     for token in tokens:
         if not token: continue
-
-        attr = curses.color_pair(6) # По умолчанию белый
-        
-        # Точное совпадение по маркерам
-        if re.fullmatch(r'\[\s*ok\s*\]|Успешно:|\s\*\s', token):
-            attr = curses.color_pair(1) | curses.A_BOLD  # Зеленый
-        elif re.fullmatch(r'\[\s*!!\s*\]|\[\s*fail\s*\]|Ошибка:', token):
-            attr = curses.color_pair(2) | curses.A_BOLD  # Красный
-        elif re.fullmatch(r'Выполняю:', token):
-            attr = curses.color_pair(4) | curses.A_BOLD  # Циан
+        attr = curses.color_pair(6)
+        if re.fullmatch(r'\[\s*ok\s*\]|Успешно:|\s\*\s', token): attr = curses.color_pair(1) | curses.A_BOLD
+        elif re.fullmatch(r'\[\s*!!\s*\]|\[\s*fail\s*\]|Ошибка:', token): attr = curses.color_pair(2) | curses.A_BOLD
+        elif re.fullmatch(r'Выполняю:', token): attr = curses.color_pair(4) | curses.A_BOLD
 
         try:
             stdscr.addstr(y, curr_x, token, attr)
             curr_x += len(token)
-        except curses.error:
-            break
+        except curses.error: break
 
 def show_action_menu(stdscr, service):
     h, w = stdscr.getmaxyx()
-    menu_h, menu_w = 12, 54
+    menu_h, menu_w = 11, 54
     menu_y, menu_x = (h - menu_h) // 2, (w - menu_w) // 2
 
     win = curses.newwin(menu_h, menu_w, menu_y, menu_x)
@@ -233,19 +224,12 @@ def show_action_menu(stdscr, service):
         (L['act_pid'], "PID", service['name']),
         (L['act_add_auto'], "CMD", f"rc-update add {service['name']} default"),
         (L['act_del_auto'], "CMD", f"rc-update del {service['name']} default"),
+        (L['act_cancel'], "CANCEL", "")
     ]
-
-    if service['is_fav']:
-        actions.append((L['act_del_fav'], "FAV_DEL", service['name']))
-    else:
-        actions.append((L['act_add_fav'], "FAV_ADD", service['name']))
-
-    actions.append((L['act_cancel'], "CANCEL", ""))
 
     sel_idx = 0
     while True:
-        title = L['menu_title'].format(service['name'])
-        win.addstr(1, 2, title, curses.A_BOLD | curses.color_pair(5))
+        win.addstr(1, 2, L['menu_title'].format(service['name']), curses.A_BOLD | curses.color_pair(5))
         win.addstr(2, 2, "="*(menu_w-4), curses.color_pair(5))
 
         for idx, (label, _, _) in enumerate(actions):
@@ -255,27 +239,15 @@ def show_action_menu(stdscr, service):
         win.refresh()
         key = win.getch()
 
-        if key == curses.KEY_UP and sel_idx > 0:
-            sel_idx -= 1
-        elif key == curses.KEY_DOWN and sel_idx < len(actions) - 1:
-            sel_idx += 1
-        elif key in [curses.KEY_ENTER, 10, 13]:
-            return actions[sel_idx][1], actions[sel_idx][2]
-        elif key == 27:
-            return "CANCEL", ""
-        elif key == curses.KEY_MOUSE:
-            try:
-                _, mx, my, _, bstate = curses.getmouse()
-                if bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_PRESSED):
-                    if menu_y + 3 <= my < menu_y + 3 + len(actions) and menu_x <= mx <= menu_x + menu_w:
-                        clicked_idx = my - (menu_y + 3)
-                        return actions[clicked_idx][1], actions[clicked_idx][2]
-            except:
-                pass
+        if key == curses.KEY_UP and sel_idx > 0: sel_idx -= 1
+        elif key == curses.KEY_DOWN and sel_idx < len(actions) - 1: sel_idx += 1
+        elif key in [curses.KEY_ENTER, 10, 13]: return actions[sel_idx][1], actions[sel_idx][2]
+        elif key == 27: return "CANCEL", ""
 
 def main(stdscr):
     curses.curs_set(0)
     stdscr.keypad(True)
+    stdscr.timeout(2000) # Обновление интерфейса каждые 2 секунды (для top)
     curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
 
     curses.start_color()
@@ -283,16 +255,23 @@ def main(stdscr):
     curses.init_pair(1, curses.COLOR_GREEN, -1)
     curses.init_pair(2, curses.COLOR_RED, -1)
     curses.init_pair(3, curses.COLOR_YELLOW, -1)
-    curses.init_pair(4, curses.COLOR_CYAN, -1)     # Для выделений и Выполняю:
+    curses.init_pair(4, curses.COLOR_CYAN, -1)
     curses.init_pair(5, curses.COLOR_WHITE, curses.COLOR_BLUE)
-    curses.init_pair(6, curses.COLOR_WHITE, -1)    # Базовый белый
+    curses.init_pair(6, curses.COLOR_WHITE, -1)
+    curses.init_pair(7, curses.COLOR_MAGENTA, -1)
 
-    favs = get_favorites()
-    services = get_services(favs)
+    favs = get_list(FAV_FILE)
+    bl_set = get_list(BLACKLIST_FILE)
+    prio_dict = get_dict(PRIO_FILE)
+    
+    show_blacklist = False
+    services = get_services(favs, bl_set, prio_dict, show_blacklist)
     sel_idx = 0
     log_messages = [L['msg_welcome']]
     
-    # Флаги отложенного выполнения, чтобы успевать перерисовать интерфейс и убрать меню
+    top_procs_cache = get_top_processes()
+    last_top_update = time.time()
+
     pending_action = None
     pending_payload = None
 
@@ -301,53 +280,59 @@ def main(stdscr):
         h, w = stdscr.getmaxyx()
         max_w = w - 1
 
-        if h < 18 or max_w < 70:
+        if h < 24 or max_w < 70:
             stdscr.addstr(0, 0, L['err_small'])
             stdscr.refresh()
             stdscr.getch()
             break
 
+        # Заголовок
+        stdscr.addstr(0, 0, L['title'].center(max_w), curses.color_pair(4) | curses.A_BOLD)
+        stdscr.addstr(1, 0, "-" * max_w)
+
+        # TOP процессов
+        show_top = h >= 30  # Показываем процессы только если высота позволяет
+        list_start_y = 3
+        if show_top:
+            stdscr.addstr(2, 2, L['top_title'], curses.A_BOLD | curses.color_pair(3))
+            for idx, proc in enumerate(top_procs_cache[:5]): # Header + 4 procs
+                attr = curses.color_pair(6) if idx > 0 else curses.color_pair(4)
+                stdscr.addstr(3 + idx, 4, proc[:max_w-8], attr)
+            stdscr.addstr(8, 0, "-" * max_w)
+            list_start_y = 9
+
+        # Заголовки таблицы
         col_count = 2 if max_w >= 135 else 1
         col_w = max_w // col_count
-
-        # Шапка
-        stdscr.addstr(0, 0, L['title'].center(max_w), curses.color_pair(4) | curses.A_BOLD)
-
         header_str = f"{L['col_service'].ljust(32)} {L['col_status'].ljust(15)} {L['col_autorun']}"
+        
         if col_count == 2:
-            stdscr.addstr(1, 2, header_str[:col_w - 4], curses.A_BOLD)
-            stdscr.addstr(1, 2 + col_w, header_str[:col_w - 4], curses.A_BOLD)
+            stdscr.addstr(list_start_y, 2, header_str[:col_w - 4], curses.A_BOLD)
+            stdscr.addstr(list_start_y, 2 + col_w, header_str[:col_w - 4], curses.A_BOLD)
         else:
-            stdscr.addstr(1, 2, header_str, curses.A_BOLD)
+            stdscr.addstr(list_start_y, 2, header_str, curses.A_BOLD)
 
-        stdscr.addstr(2, 0, "-" * max_w)
-
-        # Вычисление области списка и логов (динамически 9 строк, если терминал достаточно большой)
-        log_lines_count = 9 if h >= 24 else 5
+        stdscr.addstr(list_start_y + 1, 0, "-" * max_w)
+        
+        # Расчет размеров списков и логов
+        log_lines_count = 8 if h >= 28 else 6 # Увеличен лог
         bottom_h = log_lines_count + 3
-        list_start_y = 3
-        list_h = h - list_start_y - bottom_h
+        actual_list_start = list_start_y + 2
+        list_h = h - actual_list_start - bottom_h
         items_per_page = list_h * col_count
 
         current_page = sel_idx // items_per_page
         scroll_offset = current_page * items_per_page
 
-        # Отрисовка списка
+        # Отрисовка сервисов
         for i in range(items_per_page):
             idx = scroll_offset + i
-            if idx >= len(services):
-                break
-
+            if idx >= len(services): break
             svc = services[idx]
-
-            if col_count == 2:
-                row_idx = i % list_h
-                col_idx = i // list_h
-            else:
-                row_idx = i
-                col_idx = 0
-
-            y = list_start_y + row_idx
+            
+            row_idx = i % list_h if col_count == 2 else i
+            col_idx = i // list_h if col_count == 2 else 0
+            y = actual_list_start + row_idx
             x_offset = col_idx * col_w
 
             status_color = curses.color_pair(6)
@@ -355,43 +340,57 @@ def main(stdscr):
             elif "crashed" in svc['status']: status_color = curses.color_pair(3)
             elif "stopped" in svc['status']: status_color = curses.color_pair(2)
 
-            display_name = f"[★] {svc['name']}" if svc['is_fav'] else f"    {svc['name']}"
-            safe_name = display_name[:32]
+            # Формирование иконок статуса
+            prefix = "   "
+            name_color = curses.color_pair(6)
+            
+            if svc['is_fav']:
+                prefix = "[★]"
+                name_color = curses.color_pair(3) | curses.A_BOLD
+            elif svc['is_bl']:
+                prefix = "[B]"
+                name_color = curses.color_pair(6) | curses.A_DIM
+            elif svc['priority'] == 1:
+                prefix = "[↑]"
+                name_color = curses.color_pair(4) | curses.A_BOLD
+            elif svc['priority'] == -1:
+                prefix = "[↓]"
+                name_color = curses.color_pair(6) | curses.A_DIM
+
+            safe_name = f"{prefix} {svc['name']}"[:32]
             safe_status = svc['status'][:13]
             safe_runlevel = svc['runlevel'][:15]
 
-            # Отрисовка строки сервиса
             if idx == sel_idx:
                 stdscr.addstr(y, x_offset, " " * (col_w - 1), curses.color_pair(4) | curses.A_REVERSE)
                 stdscr.addstr(y, x_offset + 2, safe_name.ljust(32), curses.color_pair(4) | curses.A_REVERSE | curses.A_BOLD)
                 stdscr.addstr(y, x_offset + 35, safe_status.ljust(15), curses.color_pair(4) | curses.A_REVERSE)
                 stdscr.addstr(y, x_offset + 51, safe_runlevel, curses.color_pair(4) | curses.A_REVERSE)
             else:
-                name_color = curses.color_pair(3) | curses.A_BOLD if svc['is_fav'] else curses.color_pair(6)
                 stdscr.addstr(y, x_offset + 2, safe_name.ljust(32), name_color)
                 stdscr.addstr(y, x_offset + 35, safe_status.ljust(15), status_color | curses.A_BOLD)
                 stdscr.addstr(y, x_offset + 51, safe_runlevel, curses.color_pair(3))
 
         # Окно логов
         stdscr.addstr(h - bottom_h, 0, "-" * max_w)
-        stdscr.addstr(h - bottom_h + 1, 2, L['log_title'], curses.A_BOLD | curses.color_pair(6))
+        bl_ind = " (Вкл. скрытые)" if show_blacklist else ""
+        stdscr.addstr(h - bottom_h + 1, 2, L['log_title'] + bl_ind, curses.A_BOLD | curses.color_pair(6))
 
         for idx, log_msg in enumerate(log_messages[-log_lines_count:]):
             draw_colorized_log(stdscr, h - bottom_h + 2 + idx, 2, log_msg, max_w)
 
         # Подсказки внизу
-        try:
-            stdscr.addstr(h - 1, 0, L['bottom_hint'].center(max_w), curses.color_pair(4))
-        except curses.error:
-            pass
+        try: stdscr.addstr(h - 1, 0, L['bottom_hint'].center(max_w), curses.color_pair(4))
+        except curses.error: pass
 
         stdscr.refresh()
 
-        # Выполнение отложенной команды ПОСЛЕ перерисовки интерфейса (чтобы скрыть меню)
+        # Выполнение отложенной команды
         if pending_action:
             if pending_action == "CMD":
                 res = execute_command(pending_payload)
-                log_messages.append(res)
+                for line in res.split('\n'):
+                    if line.strip(): log_messages.append(line.strip())
             elif pending_action == "PID":
                 cmds = [
                     f"rm -f /run/{pending_payload}.pid",
@@ -403,96 +402,93 @@ def main(stdscr):
 
             pending_action = None
             pending_payload = None
-            services = get_services(favs)
-            continue # Перерисовываем интерфейс с результатом команды
+            services = get_services(favs, bl_set, prio_dict, show_blacklist)
+            continue 
 
         key = stdscr.getch()
 
-        if key in (ord('q'), ord('Q')):
-            break
-        elif key == curses.KEY_UP and sel_idx > 0:
-            sel_idx -= 1
-        elif key == curses.KEY_DOWN and sel_idx < len(services) - 1:
-            sel_idx += 1
-        elif key == curses.KEY_NPAGE:
-            sel_idx = min(len(services) - 1, sel_idx + items_per_page)
-        elif key == curses.KEY_PPAGE:
-            sel_idx = max(0, sel_idx - items_per_page)
+        # Таймер для обновления TOP процессов
+        current_time = time.time()
+        if current_time - last_top_update > 2.0:
+            top_procs_cache = get_top_processes()
+            last_top_update = current_time
+
+        if key == -1: continue # Таймаут, просто перерисовываем экран
+
+        if key in (ord('q'), ord('Q')): break
+        elif key == curses.KEY_UP and sel_idx > 0: sel_idx -= 1
+        elif key == curses.KEY_DOWN and sel_idx < len(services) - 1: sel_idx += 1
+        elif key == curses.KEY_NPAGE: sel_idx = min(len(services) - 1, sel_idx + 5) # Шаг 5 строк
+        elif key == curses.KEY_PPAGE: sel_idx = max(0, sel_idx - 5)                 # Шаг 5 строк
+        
         elif key in (ord('r'), ord('R')):
             log_messages.append(L['msg_refresh'])
-            services = get_services(favs)
+            services = get_services(favs, bl_set, prio_dict, show_blacklist)
+            
+        elif key in (ord('l'), ord('L')):
+            show_blacklist = not show_blacklist
+            status_txt = "Отображаются" if show_blacklist else "Скрыты"
+            log_messages.append(L['msg_bl_mode'].format(status_txt))
+            services = get_services(favs, bl_set, prio_dict, show_blacklist)
+            sel_idx = min(sel_idx, max(0, len(services) - 1))
+
+        elif key in (ord('b'), ord('B')):
+            if services:
+                svc_name = services[sel_idx]['name']
+                if svc_name in bl_set: bl_set.discard(svc_name)
+                else: bl_set.add(svc_name)
+                save_list(BLACKLIST_FILE, bl_set)
+                log_messages.append(L['msg_bl'].format(svc_name))
+                services = get_services(favs, bl_set, prio_dict, show_blacklist)
+                sel_idx = min(sel_idx, max(0, len(services) - 1))
+
+        elif key in (ord('p'), ord('P')):
+            if services:
+                svc_name = services[sel_idx]['name']
+                curr_prio = prio_dict.get(svc_name, 0)
+                # Цикл приоритета: 0 (Обычный) -> 1 (Высокий) -> -1 (Низкий) -> 0
+                new_prio = 1 if curr_prio == 0 else (-1 if curr_prio == 1 else 0)
+                
+                if new_prio == 0 and svc_name in prio_dict: del prio_dict[svc_name]
+                else: prio_dict[svc_name] = new_prio
+                
+                save_dict(PRIO_FILE, prio_dict)
+                log_messages.append(L['msg_prio'].format(svc_name))
+                services = get_services(favs, bl_set, prio_dict, show_blacklist)
+                
         elif key in (ord('f'), ord('F')):
             if services:
-                svc = services[sel_idx]
-                if svc['is_fav']:
-                    favs.discard(svc['name'])
-                    log_messages.append(L['msg_fav_del'].format(svc['name']))
-                else:
-                    favs.add(svc['name'])
-                    log_messages.append(L['msg_fav_add'].format(svc['name']))
-                save_favorites(favs)
-                services = get_services(favs)
+                svc_name = services[sel_idx]['name']
+                if svc_name in favs: favs.discard(svc_name)
+                else: favs.add(svc_name)
+                save_list(FAV_FILE, favs)
+                log_messages.append(L['msg_fav'].format(svc_name))
+                services = get_services(favs, bl_set, prio_dict, show_blacklist)
+                
         elif key in [curses.KEY_ENTER, 10, 13]:
             if not services: continue
             action_type, payload = show_action_menu(stdscr, services[sel_idx])
-
             if action_type in ("CMD", "PID"):
-                if action_type == "CMD":
-                    log_messages.append(L['msg_exec'].format(payload))
-                # Откладываем выполнение, чтобы интерфейс успел обновиться
-                pending_action = action_type
-                pending_payload = payload
-                continue
-
-            elif action_type == "FAV_ADD":
-                favs.add(payload)
-                save_favorites(favs)
-                log_messages.append(L['msg_fav_add'].format(payload))
-                services = get_services(favs)
-            elif action_type == "FAV_DEL":
-                favs.discard(payload)
-                save_favorites(favs)
-                log_messages.append(L['msg_fav_del'].format(payload))
-                services = get_services(favs)
+                if action_type == "CMD": log_messages.append(L['msg_exec'].format(payload))
+                pending_action, pending_payload = action_type, payload
 
         elif key == curses.KEY_MOUSE:
             try:
                 _, mx, my, _, bstate = curses.getmouse()
-                if list_start_y <= my < list_start_y + list_h:
-                    row = my - list_start_y
+                if actual_list_start <= my < actual_list_start + list_h:
+                    row = my - actual_list_start
                     col = mx // col_w
-
                     if col < col_count:
-                        if col_count == 2:
-                            clicked_idx = scroll_offset + (col * list_h) + row
-                        else:
-                            clicked_idx = scroll_offset + row
-
+                        clicked_idx = scroll_offset + (col * list_h) + row if col_count == 2 else scroll_offset + row
                         if clicked_idx < len(services):
                             if sel_idx != clicked_idx:
                                 sel_idx = clicked_idx
                             elif bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED | curses.BUTTON1_PRESSED):
                                 action_type, payload = show_action_menu(stdscr, services[sel_idx])
-
                                 if action_type in ("CMD", "PID"):
-                                    if action_type == "CMD":
-                                        log_messages.append(L['msg_exec'].format(payload))
-                                    pending_action = action_type
-                                    pending_payload = payload
-                                    continue
-
-                                elif action_type == "FAV_ADD":
-                                    favs.add(payload)
-                                    save_favorites(favs)
-                                    log_messages.append(L['msg_fav_add'].format(payload))
-                                    services = get_services(favs)
-                                elif action_type == "FAV_DEL":
-                                    favs.discard(payload)
-                                    save_favorites(favs)
-                                    log_messages.append(L['msg_fav_del'].format(payload))
-                                    services = get_services(favs)
-            except curses.error:
-                pass
+                                    if action_type == "CMD": log_messages.append(L['msg_exec'].format(payload))
+                                    pending_action, pending_payload = action_type, payload
+            except curses.error: pass
 
 if __name__ == "__main__":
     curses.wrapper(main)
