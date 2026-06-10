@@ -2,20 +2,17 @@
 # -*- coding: utf-8 -*-
 """
 ========================================================================
-   Servicetop OpenRC Manager v3.1 (Colorized Edition)
+   Servicetop OpenRC Manager v3.2 (Advanced Edition)
    Repository: https://github.com/PEAKT0P/servicetop.py
 ========================================================================
-   Update/Install:
+    Update/Install:
    $ sudo rm -f /opt/servicetop/lang.json
    $ sudo mkdir -p /opt/servicetop/
    $ sudo curl -o /opt/servicetop/servicetop.py https://raw.githubusercontent.com/PEAKT0P/servicetop.py/main/servicetop.py
    $ sudo chmod +x /opt/servicetop/servicetop.py
    $ sudo ln -sf /opt/servicetop/servicetop.py /usr/local/bin/servicetop
-
-   Usage:
+    Usage:
    $ sudo servicetop
-   Servicetop OpenRC Manager v4.0 (Advanced Edition)
-   Repository: https://github.com/PEAKT0P/servicetop.py
 ========================================================================
 """
 
@@ -174,7 +171,6 @@ def get_services(favs, bl_set, prio_dict, show_blacklist):
 
 def fix_openrc_logs(text):
     """ Разделяет склеенные логи OpenRC на новые строки (напр: [ ok ] * samba...) """
-    # Заменяем пробел перед звездочкой на перенос строки, если перед этим был статус
     return re.sub(r'(\[\s*(?:ok|!!|fail)\s*\])\s*(?=\*)', r'\1\n', text)
 
 def execute_command(cmd):
@@ -259,6 +255,7 @@ def main(stdscr):
     curses.init_pair(5, curses.COLOR_WHITE, curses.COLOR_BLUE)
     curses.init_pair(6, curses.COLOR_WHITE, -1)
     curses.init_pair(7, curses.COLOR_MAGENTA, -1)
+    curses.init_pair(8, curses.COLOR_YELLOW, curses.COLOR_BLUE) # Новая пара для избранного с приоритетом
 
     favs = get_list(FAV_FILE)
     bl_set = get_list(BLACKLIST_FILE)
@@ -291,11 +288,11 @@ def main(stdscr):
         stdscr.addstr(1, 0, "-" * max_w)
 
         # TOP процессов
-        show_top = h >= 30  # Показываем процессы только если высота позволяет
+        show_top = h >= 30  
         list_start_y = 3
         if show_top:
             stdscr.addstr(2, 2, L['top_title'], curses.A_BOLD | curses.color_pair(3))
-            for idx, proc in enumerate(top_procs_cache[:5]): # Header + 4 procs
+            for idx, proc in enumerate(top_procs_cache[:5]):
                 attr = curses.color_pair(6) if idx > 0 else curses.color_pair(4)
                 stdscr.addstr(3 + idx, 4, proc[:max_w-8], attr)
             stdscr.addstr(8, 0, "-" * max_w)
@@ -314,8 +311,8 @@ def main(stdscr):
 
         stdscr.addstr(list_start_y + 1, 0, "-" * max_w)
         
-        # Расчет размеров списков и логов
-        log_lines_count = 8 if h >= 28 else 6 # Увеличен лог
+        # Расчет размеров
+        log_lines_count = 8 if h >= 28 else 6
         bottom_h = log_lines_count + 3
         actual_list_start = list_start_y + 2
         list_h = h - actual_list_start - bottom_h
@@ -340,34 +337,49 @@ def main(stdscr):
             elif "crashed" in svc['status']: status_color = curses.color_pair(3)
             elif "stopped" in svc['status']: status_color = curses.color_pair(2)
 
-            # Формирование иконок статуса
             prefix = "   "
             name_color = curses.color_pair(6)
+            prefix_color = name_color
             
-            if svc['is_fav']:
+            # Логика приоритетов и избранного
+            if svc['is_fav'] and svc['priority'] == 1:
+                prefix = "[★]"
+                prefix_color = curses.color_pair(8) | curses.A_BOLD  # Желтый на синем фоне
+                name_color = curses.color_pair(3) | curses.A_BOLD    # Имя остается просто желтым
+            elif svc['is_fav']:
                 prefix = "[★]"
                 name_color = curses.color_pair(3) | curses.A_BOLD
+                prefix_color = name_color
             elif svc['is_bl']:
                 prefix = "[B]"
                 name_color = curses.color_pair(6) | curses.A_DIM
+                prefix_color = name_color
             elif svc['priority'] == 1:
                 prefix = "[↑]"
                 name_color = curses.color_pair(4) | curses.A_BOLD
+                prefix_color = name_color
             elif svc['priority'] == -1:
                 prefix = "[↓]"
                 name_color = curses.color_pair(6) | curses.A_DIM
+                prefix_color = name_color
 
-            safe_name = f"{prefix} {svc['name']}"[:32]
             safe_status = svc['status'][:13]
             safe_runlevel = svc['runlevel'][:15]
 
             if idx == sel_idx:
                 stdscr.addstr(y, x_offset, " " * (col_w - 1), curses.color_pair(4) | curses.A_REVERSE)
+                safe_name = f"{prefix} {svc['name']}"[:32]
                 stdscr.addstr(y, x_offset + 2, safe_name.ljust(32), curses.color_pair(4) | curses.A_REVERSE | curses.A_BOLD)
                 stdscr.addstr(y, x_offset + 35, safe_status.ljust(15), curses.color_pair(4) | curses.A_REVERSE)
                 stdscr.addstr(y, x_offset + 51, safe_runlevel, curses.color_pair(4) | curses.A_REVERSE)
             else:
-                stdscr.addstr(y, x_offset + 2, safe_name.ljust(32), name_color)
+                # Отрисовка префикса и имени раздельно для разных цветов
+                stdscr.addstr(y, x_offset + 2, prefix, prefix_color)
+                
+                space_left = 32 - len(prefix) - 1
+                safe_name_only = svc['name'][:space_left]
+                stdscr.addstr(y, x_offset + 2 + len(prefix) + 1, safe_name_only.ljust(space_left), name_color)
+                
                 stdscr.addstr(y, x_offset + 35, safe_status.ljust(15), status_color | curses.A_BOLD)
                 stdscr.addstr(y, x_offset + 51, safe_runlevel, curses.color_pair(3))
 
@@ -379,13 +391,12 @@ def main(stdscr):
         for idx, log_msg in enumerate(log_messages[-log_lines_count:]):
             draw_colorized_log(stdscr, h - bottom_h + 2 + idx, 2, log_msg, max_w)
 
-        # Подсказки внизу
+        # Подсказки
         try: stdscr.addstr(h - 1, 0, L['bottom_hint'].center(max_w), curses.color_pair(4))
         except curses.error: pass
 
         stdscr.refresh()
 
-        # Выполнение отложенной команды
         if pending_action:
             if pending_action == "CMD":
                 res = execute_command(pending_payload)
@@ -407,19 +418,18 @@ def main(stdscr):
 
         key = stdscr.getch()
 
-        # Таймер для обновления TOP процессов
         current_time = time.time()
         if current_time - last_top_update > 2.0:
             top_procs_cache = get_top_processes()
             last_top_update = current_time
 
-        if key == -1: continue # Таймаут, просто перерисовываем экран
+        if key == -1: continue 
 
         if key in (ord('q'), ord('Q')): break
         elif key == curses.KEY_UP and sel_idx > 0: sel_idx -= 1
         elif key == curses.KEY_DOWN and sel_idx < len(services) - 1: sel_idx += 1
-        elif key == curses.KEY_NPAGE: sel_idx = min(len(services) - 1, sel_idx + 5) # Шаг 5 строк
-        elif key == curses.KEY_PPAGE: sel_idx = max(0, sel_idx - 5)                 # Шаг 5 строк
+        elif key == curses.KEY_NPAGE: sel_idx = min(len(services) - 1, sel_idx + 5) 
+        elif key == curses.KEY_PPAGE: sel_idx = max(0, sel_idx - 5)                 
         
         elif key in (ord('r'), ord('R')):
             log_messages.append(L['msg_refresh'])
@@ -446,7 +456,6 @@ def main(stdscr):
             if services:
                 svc_name = services[sel_idx]['name']
                 curr_prio = prio_dict.get(svc_name, 0)
-                # Цикл приоритета: 0 (Обычный) -> 1 (Высокий) -> -1 (Низкий) -> 0
                 new_prio = 1 if curr_prio == 0 else (-1 if curr_prio == 1 else 0)
                 
                 if new_prio == 0 and svc_name in prio_dict: del prio_dict[svc_name]
