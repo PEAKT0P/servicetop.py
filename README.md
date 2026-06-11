@@ -1,4 +1,4 @@
-![ServiceTop Interface](images/servicetop.png)
+![ServiceTop Interface](servicetop.png)
 
 ServiceTop
 Интерактивный TUI-менеджер сервисов OpenRC для Gentoo Linux.
