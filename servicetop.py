@@ -85,7 +85,7 @@ DEFAULT_LANG_DATA = {
         "msg_lang_ru": "Язык переключен на Русский",
         "msg_lang_en": "Язык переключен на English",
         "warn_title": " ВНИМАНИЕ ",
-        "warn_crit": "Остановка критического сервиса может\nнарушить работу системы.\nПродолжить?",
+        "warn_crit": "Отключение критического сервиса может\nнарушить работу системы.\nПродолжить?",
         "btn_yes": "[Y/Д] Да",
         "btn_no": "[N/Н] Нет",
         "info_title": " Информация: {} ",
@@ -135,7 +135,7 @@ DEFAULT_LANG_DATA = {
         "msg_lang_ru": "Language switched to Russian",
         "msg_lang_en": "Language switched to English",
         "warn_title": " WARNING ",
-        "warn_crit": "Stopping this critical service may\ndisrupt the system.\nContinue?",
+        "warn_crit": "Disabling this critical service may\ndisrupt the system.\nContinue?",
         "btn_yes": "[Y] Yes",
         "btn_no": "[N] No",
         "info_title": " Info: {} ",
@@ -375,12 +375,12 @@ def show_confirm_dialog(stdscr, svc_name):
         safe_addstr(win, dh-2, (dw-len(hint))//2, hint[:dw-4], curses.A_BOLD)
 
         win.refresh()
-        
+
         try:
             k = win.get_wch()
         except curses.error:
             continue
-            
+
         if isinstance(k, str):
             kl = k.lower()
             if kl in ('y', 'д'): return True
@@ -449,7 +449,7 @@ def show_info_panel(stdscr, svc):
             k = win.get_wch()
         except curses.error:
             continue
-            
+
         is_esc_enter = (isinstance(k, str) and k in ('\n', '\r', '\x1b')) or (isinstance(k, int) and k in (curses.KEY_ENTER, 10, 13, 27))
         if is_esc_enter or (isinstance(k, str) and k.lower() in ('i', 'ш')): break
         if isinstance(k, int) and k == curses.KEY_MOUSE:
@@ -460,7 +460,7 @@ def show_info_panel(stdscr, svc):
 
 def show_action_menu(stdscr, service):
     h, w = stdscr.getmaxyx()
-    
+
     lbl_add = L.get('act_add_auto', 'Добавить в автозапуск').replace(' ►', '') + ' ►'
     lbl_del = L.get('act_del_auto', 'Удалить из автозапуска').replace(' ►', '') + ' ►'
 
@@ -474,7 +474,7 @@ def show_action_menu(stdscr, service):
         (lbl_del, "SUBMENU", "del"),
         (L.get('act_cancel', 'Отмена'), "CANCEL", "")
     ]
-    
+
     menu_h = min(len(actions) + 4, h - 2)
     menu_w = min(54, w - 2)
     menu_y, menu_x = max(0, (h - menu_h) // 2), max(0, (w - menu_w) // 2)
@@ -540,7 +540,7 @@ def show_action_menu(stdscr, service):
                 key = win.get_wch()
             except curses.error:
                 continue
-                
+
         is_enter = (isinstance(key, str) and key in ('\n', '\r')) or (isinstance(key, int) and key in (curses.KEY_ENTER, 10, 13))
         is_esc = (isinstance(key, str) and key == '\x1b') or (isinstance(key, int) and key == 27)
 
@@ -653,7 +653,7 @@ def main(stdscr):
     CRITICAL_SERVICES = [
         "sshd", "network", "netmount", "net.lo", "net.br0",
         "iptables", "iptables-manager", "nftables", "ufw", "firewalld",
-        "dnsmasq", "docker", "containerd", "tailscaled", "kubelet", 
+        "dnsmasq", "docker", "containerd", "tailscaled", "kubelet",
         "podman", "libvirtd", "keepalived", "bird", "wireguard", "wg-quick"
     ]
 
@@ -832,9 +832,18 @@ def main(stdscr):
         if pending_action:
             if pending_action == "CMD":
                 is_crit = False
-                if any(act in pending_payload for act in [" stop", " zap"]):
+
+                # Проверяем, является ли действие опасным (stop, zap или удаление из автозапуска)
+                is_dangerous_cmd = (
+                    any(act in pending_payload for act in [" stop", " zap"]) or
+                    pending_payload.startswith("rc-update del")
+                )
+
+                if is_dangerous_cmd:
                     parts = pending_payload.split()
+                    # Для rc-update имя сервиса идет 3-м аргументом, для /etc/init.d/ - 1-м
                     svc_name = parts[2] if "rc-update" in pending_payload else os.path.basename(parts[0])
+
                     if svc_name in CRITICAL_SERVICES or svc_name.startswith("net."):
                         is_crit = True
 
