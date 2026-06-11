@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ========================================================================
-   Servicetop OpenRC Manager v3.2 (Advanced Edition)
+   Servicetop OpenRC Manager v3.3 (Advanced Edition)
    Repository: https://github.com/PEAKT0P/servicetop.py
 ========================================================================
     Update/Install:
@@ -56,8 +56,8 @@ DEFAULT_LANG_DATA = {
         "act_restart": "Restart (Перезапуск)",
         "act_zap": "ZAP (Сброс статуса)",
         "act_pid": "Удалить PID (Форс. очистка)",
-        "act_add_auto": "Добавить в автозапуск",
-        "act_del_auto": "Удалить из автозапуска",
+        "act_add_auto": "Добавить в автозапуск ►",
+        "act_del_auto": "Удалить из автозапуска ►",
         "act_cancel": "Отмена",
         "menu_title": " Управление: {} ",
         "msg_welcome": "Добро пожаловать в ServiceTop! Сбор данных завершен.",
@@ -69,6 +69,33 @@ DEFAULT_LANG_DATA = {
         "msg_prio": "Приоритет {} изменен.",
         "msg_bl_mode": "Режим отображения Blacklist: {}",
         "err_small": "Окно терминала слишком маленькое!"
+    },
+    "en": {
+        "title": " Servicetop (Gentoo/OpenRC) ",
+        "top_title": " TOP-4 PROCESSES (CPU/MEM): ",
+        "col_service": "SERVICE",
+        "col_status": "STATUS",
+        "col_autorun": "AUTOSTART",
+        "log_title": "Activity log:",
+        "bottom_hint": " [LMB] Menu [PgUp/Dn] Step 5 [F] Favorites [P] Priority [B] Blacklist [L] Show all [Q] Exit ",
+        "act_start": "Start",
+        "act_stop": "Stop",
+        "act_restart": "Restart",
+        "act_zap": "ZAP (Reset status)",
+        "act_pid": "Delete PID (Force cleanup)",
+        "act_add_auto": "Add to autostart ►",
+        "act_del_auto": "Remove from autostart ►",
+        "act_cancel": "Cancel",
+        "menu_title": " Management: {} ",
+        "msg_welcome": "Welcome to ServiceTop! Data collection completed.",
+        "msg_refresh": "Refreshing service list...",
+        "msg_exec": "Executing: {}",
+        "msg_pid_del": "PID files for {} have been removed.",
+        "msg_fav": "Favorite status for {} has been changed.",
+        "msg_bl": "Blacklist status for {} has been changed.",
+        "msg_prio": "Priority for {} has been changed.",
+        "msg_bl_mode": "Blacklist display mode: {}",
+        "err_small": "Terminal window is too small!"
     }
 }
 
@@ -146,16 +173,16 @@ def get_services(favs, bl_set, prio_dict, show_blacklist):
     for file in sorted(os.listdir('/etc/init.d/')):
         if file in ['functions.sh', 'net.lo'] or file.startswith('.'): continue
         filepath = os.path.join('/etc/init.d/', file)
-        
+
         if os.path.isfile(filepath) and os.access(filepath, os.X_OK):
             is_fav = file in favs
             is_bl = file in bl_set
             prio = prio_dict.get(file, 0)
-            
+
             # Пропускаем, если сервис в blacklist и режим отображения скрыт (но избранные показываем всегда)
             if is_bl and not show_blacklist and not is_fav:
                 continue
-                
+
             services.append({
                 "name": file,
                 "status": status_map.get(file, "stopped"),
@@ -210,35 +237,101 @@ def show_action_menu(stdscr, service):
     win = curses.newwin(menu_h, menu_w, menu_y, menu_x)
     win.keypad(True)
     win.bkgd(' ', curses.color_pair(5))
-    win.box()
+
+    # Гарантируем, что стрелки есть, даже если используется старый lang.json
+    lbl_add = L.get('act_add_auto', 'Добавить в автозапуск').replace(' ►', '') + ' ►'
+    lbl_del = L.get('act_del_auto', 'Удалить из автозапуска').replace(' ►', '') + ' ►'
 
     actions = [
-        (L['act_start'], "CMD", f"/etc/init.d/{service['name']} start"),
-        (L['act_stop'], "CMD", f"/etc/init.d/{service['name']} stop"),
-        (L['act_restart'], "CMD", f"/etc/init.d/{service['name']} restart"),
-        (L['act_zap'], "CMD", f"/etc/init.d/{service['name']} zap"),
-        (L['act_pid'], "PID", service['name']),
-        (L['act_add_auto'], "CMD", f"rc-update add {service['name']} default"),
-        (L['act_del_auto'], "CMD", f"rc-update del {service['name']} default"),
-        (L['act_cancel'], "CANCEL", "")
+        (L.get('act_start', 'Start (Запуск)'), "CMD", f"/etc/init.d/{service['name']} start"),
+        (L.get('act_stop', 'Stop (Остановка)'), "CMD", f"/etc/init.d/{service['name']} stop"),
+        (L.get('act_restart', 'Restart (Перезапуск)'), "CMD", f"/etc/init.d/{service['name']} restart"),
+        (L.get('act_zap', 'ZAP (Сброс статуса)'), "CMD", f"/etc/init.d/{service['name']} zap"),
+        (L.get('act_pid', 'Удалить PID (Форс. очистка)'), "PID", service['name']),
+        (lbl_add, "SUBMENU", "add"),
+        (lbl_del, "SUBMENU", "del"),
+        (L.get('act_cancel', 'Отмена'), "CANCEL", "")
     ]
 
     sel_idx = 0
+    in_submenu = False
+    sub_idx = 0
+    runlevels = ["default", "boot", "nonetwork", "shutdown", "sysinit"]
+
     while True:
-        win.addstr(1, 2, L['menu_title'].format(service['name']), curses.A_BOLD | curses.color_pair(5))
+        win.erase()
+        win.box()
+        win.addstr(1, 2, L.get('menu_title', ' Управление: {} ').format(service['name']), curses.A_BOLD | curses.color_pair(5))
         win.addstr(2, 2, "="*(menu_w-4), curses.color_pair(5))
 
-        for idx, (label, _, _) in enumerate(actions):
-            attr = curses.color_pair(4) if idx == sel_idx else curses.color_pair(5)
+        for idx, (label, act_type, _) in enumerate(actions):
+            if idx == sel_idx:
+                # Если в подменю, слегка приглушаем выделение основного пункта
+                attr = curses.color_pair(4) | curses.A_DIM if in_submenu else curses.color_pair(4)
+            else:
+                attr = curses.color_pair(5)
+
             win.addstr(3 + idx, 4, f" {label} ".ljust(menu_w-8), attr)
 
         win.refresh()
-        key = win.getch()
 
-        if key == curses.KEY_UP and sel_idx > 0: sel_idx -= 1
-        elif key == curses.KEY_DOWN and sel_idx < len(actions) - 1: sel_idx += 1
-        elif key in [curses.KEY_ENTER, 10, 13]: return actions[sel_idx][1], actions[sel_idx][2]
-        elif key == 27: return "CANCEL", ""
+        if in_submenu:
+            sub_h = len(runlevels) + 2
+            sub_w = 17
+            # Позиционируем подменю рядом с выбранным пунктом
+            sub_y = menu_y + 3 + sel_idx
+            sub_x = menu_x + menu_w - 2
+
+            # Проверка, чтобы не вылезти за края экрана
+            if sub_y + sub_h > h: sub_y = h - sub_h
+            if sub_x + sub_w > w: sub_x = w - sub_w
+
+            sub_win = curses.newwin(sub_h, sub_w, sub_y, sub_x)
+            sub_win.keypad(True)
+            sub_win.bkgd(' ', curses.color_pair(5))
+            sub_win.box()
+
+            for i, rl in enumerate(runlevels):
+                attr = curses.color_pair(4) if i == sub_idx else curses.color_pair(5)
+                sub_win.addstr(1 + i, 2, f" {rl} ".ljust(sub_w-4), attr)
+
+            sub_win.refresh()
+            key = sub_win.getch()
+        else:
+            key = win.getch()
+
+        if in_submenu:
+            if key == curses.KEY_UP and sub_idx > 0:
+                sub_idx -= 1
+            elif key == curses.KEY_DOWN and sub_idx < len(runlevels) - 1:
+                sub_idx += 1
+            elif key in (curses.KEY_LEFT, 27): # Left Arrow or ESC -> Выход из подменю
+                in_submenu = False
+                # Перерисовываем фоновые окна, чтобы стереть след от подменю
+                stdscr.touchwin()
+                stdscr.refresh()
+            elif key in [curses.KEY_ENTER, 10, 13]:
+                op = actions[sel_idx][2]
+                rl = runlevels[sub_idx]
+                return "CMD", f"rc-update {op} {service['name']} {rl}"
+        else:
+            if key == curses.KEY_UP and sel_idx > 0:
+                sel_idx -= 1
+            elif key == curses.KEY_DOWN and sel_idx < len(actions) - 1:
+                sel_idx += 1
+            elif key == curses.KEY_RIGHT and actions[sel_idx][1] == "SUBMENU":
+                in_submenu = True
+                sub_idx = 0
+            elif key in [curses.KEY_ENTER, 10, 13]:
+                act_type = actions[sel_idx][1]
+                if act_type == "SUBMENU":
+                    # Быстрое добавление в default при нажатии Enter на самом пункте
+                    op = actions[sel_idx][2]
+                    return "CMD", f"rc-update {op} {service['name']} default"
+                else:
+                    return act_type, actions[sel_idx][2]
+            elif key == 27: # ESC
+                return "CANCEL", ""
 
 def main(stdscr):
     curses.curs_set(0)
@@ -260,12 +353,12 @@ def main(stdscr):
     favs = get_list(FAV_FILE)
     bl_set = get_list(BLACKLIST_FILE)
     prio_dict = get_dict(PRIO_FILE)
-    
+
     show_blacklist = False
     services = get_services(favs, bl_set, prio_dict, show_blacklist)
     sel_idx = 0
     log_messages = [L['msg_welcome']]
-    
+
     top_procs_cache = get_top_processes()
     last_top_update = time.time()
 
@@ -288,7 +381,7 @@ def main(stdscr):
         stdscr.addstr(1, 0, "-" * max_w)
 
         # TOP процессов
-        show_top = h >= 30  
+        show_top = h >= 30
         list_start_y = 3
         if show_top:
             stdscr.addstr(2, 2, L['top_title'], curses.A_BOLD | curses.color_pair(3))
@@ -302,7 +395,7 @@ def main(stdscr):
         col_count = 2 if max_w >= 135 else 1
         col_w = max_w // col_count
         header_str = f"{L['col_service'].ljust(32)} {L['col_status'].ljust(15)} {L['col_autorun']}"
-        
+
         if col_count == 2:
             stdscr.addstr(list_start_y, 2, header_str[:col_w - 4], curses.A_BOLD)
             stdscr.addstr(list_start_y, 2 + col_w, header_str[:col_w - 4], curses.A_BOLD)
@@ -310,7 +403,7 @@ def main(stdscr):
             stdscr.addstr(list_start_y, 2, header_str, curses.A_BOLD)
 
         stdscr.addstr(list_start_y + 1, 0, "-" * max_w)
-        
+
         # Расчет размеров
         log_lines_count = 8 if h >= 28 else 6
         bottom_h = log_lines_count + 3
@@ -326,7 +419,7 @@ def main(stdscr):
             idx = scroll_offset + i
             if idx >= len(services): break
             svc = services[idx]
-            
+
             row_idx = i % list_h if col_count == 2 else i
             col_idx = i // list_h if col_count == 2 else 0
             y = actual_list_start + row_idx
@@ -340,7 +433,7 @@ def main(stdscr):
             prefix = "   "
             name_color = curses.color_pair(6)
             prefix_color = name_color
-            
+
             # Логика приоритетов и избранного
             if svc['is_fav'] and svc['priority'] == 1:
                 prefix = "[★]"
@@ -375,11 +468,11 @@ def main(stdscr):
             else:
                 # Отрисовка префикса и имени раздельно для разных цветов
                 stdscr.addstr(y, x_offset + 2, prefix, prefix_color)
-                
+
                 space_left = 32 - len(prefix) - 1
                 safe_name_only = svc['name'][:space_left]
                 stdscr.addstr(y, x_offset + 2 + len(prefix) + 1, safe_name_only.ljust(space_left), name_color)
-                
+
                 stdscr.addstr(y, x_offset + 35, safe_status.ljust(15), status_color | curses.A_BOLD)
                 stdscr.addstr(y, x_offset + 51, safe_runlevel, curses.color_pair(3))
 
@@ -414,7 +507,7 @@ def main(stdscr):
             pending_action = None
             pending_payload = None
             services = get_services(favs, bl_set, prio_dict, show_blacklist)
-            continue 
+            continue
 
         key = stdscr.getch()
 
@@ -423,18 +516,18 @@ def main(stdscr):
             top_procs_cache = get_top_processes()
             last_top_update = current_time
 
-        if key == -1: continue 
+        if key == -1: continue
 
         if key in (ord('q'), ord('Q')): break
         elif key == curses.KEY_UP and sel_idx > 0: sel_idx -= 1
         elif key == curses.KEY_DOWN and sel_idx < len(services) - 1: sel_idx += 1
-        elif key == curses.KEY_NPAGE: sel_idx = min(len(services) - 1, sel_idx + 5) 
-        elif key == curses.KEY_PPAGE: sel_idx = max(0, sel_idx - 5)                 
-        
+        elif key == curses.KEY_NPAGE: sel_idx = min(len(services) - 1, sel_idx + 5)
+        elif key == curses.KEY_PPAGE: sel_idx = max(0, sel_idx - 5)
+
         elif key in (ord('r'), ord('R')):
             log_messages.append(L['msg_refresh'])
             services = get_services(favs, bl_set, prio_dict, show_blacklist)
-            
+
         elif key in (ord('l'), ord('L')):
             show_blacklist = not show_blacklist
             status_txt = "Отображаются" if show_blacklist else "Скрыты"
@@ -457,14 +550,14 @@ def main(stdscr):
                 svc_name = services[sel_idx]['name']
                 curr_prio = prio_dict.get(svc_name, 0)
                 new_prio = 1 if curr_prio == 0 else (-1 if curr_prio == 1 else 0)
-                
+
                 if new_prio == 0 and svc_name in prio_dict: del prio_dict[svc_name]
                 else: prio_dict[svc_name] = new_prio
-                
+
                 save_dict(PRIO_FILE, prio_dict)
                 log_messages.append(L['msg_prio'].format(svc_name))
                 services = get_services(favs, bl_set, prio_dict, show_blacklist)
-                
+
         elif key in (ord('f'), ord('F')):
             if services:
                 svc_name = services[sel_idx]['name']
@@ -473,7 +566,7 @@ def main(stdscr):
                 save_list(FAV_FILE, favs)
                 log_messages.append(L['msg_fav'].format(svc_name))
                 services = get_services(favs, bl_set, prio_dict, show_blacklist)
-                
+
         elif key in [curses.KEY_ENTER, 10, 13]:
             if not services: continue
             action_type, payload = show_action_menu(stdscr, services[sel_idx])
