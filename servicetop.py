@@ -6,7 +6,7 @@
    Repository: https://github.com/PEAKT0P/servicetop.py
 ========================================================================
     Update/Install:
-   $ sudo rm -f /opt/servicetop/lang.json
+   $ sudo rm -f /opt/servicetop/lang.json /opt/servicetop/blacklist.list /opt/servicetop/favorites.list /opt/servicetop/priority.json
    $ sudo mkdir -p /opt/servicetop/
    $ sudo curl -o /opt/servicetop/servicetop.py https://raw.githubusercontent.com/PEAKT0P/servicetop.py/main/servicetop.py
    $ sudo chmod +x /opt/servicetop/servicetop.py
