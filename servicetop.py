@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ========================================================================
-   Servicetop OpenRC Manager v3.4.2 (Advanced Scroll Edition)
+   Servicetop OpenRC Manager v3.5 (Grid Edition)
    Repository: https://github.com/PEAKT0P/servicetop.py
 ========================================================================
     Update/Install:
@@ -62,7 +62,7 @@ DEFAULT_LANG_DATA = {
         "col_status": "СТАТУС",
         "col_autorun": "АВТОЗАПУСК",
         "log_title": "Лог действий:",
-        "bottom_hint": " [ЛКМ] Меню [PgUp/Dn] Шаг 5 [F] Избранное [P] Приор. [B] Blacklist [L] Все [/] Поиск [G] Язык [I] Инфо [F10/Q] Выход ",
+        "bottom_hint": " [ЛКМ] Меню [PgUp/Dn] Шаг [F] Избранное [P] Приор. [B] Blacklist [L] Все [/] Поиск [G] Язык [I] Инфо [F10/Q] Выход ",
         "act_start": "Start (Запуск)",
         "act_stop": "Stop (Остановка)",
         "act_restart": "Restart (Перезапуск)",
@@ -112,7 +112,7 @@ DEFAULT_LANG_DATA = {
         "col_status": "STATUS",
         "col_autorun": "AUTOSTART",
         "log_title": "Activity log:",
-        "bottom_hint": " [LMB] Menu [PgUp/Dn] Step 5 [F] Fav [P] Prio [B] Blacklist [L] All [/] Search [G] Lang [I] Info [F10/Q] Exit ",
+        "bottom_hint": " [LMB] Menu [PgUp/Dn] Step [F] Fav [P] Prio [B] Blacklist [L] All [/] Search [G] Lang [I] Info [F10/Q] Exit ",
         "act_start": "Start",
         "act_stop": "Stop",
         "act_restart": "Restart",
@@ -626,7 +626,6 @@ def main(stdscr):
         h, w = stdscr.getmaxyx()
         max_w = w - 1
 
-        # Полная адаптивность: снижены лимиты для корректной работы на смартфонах/планшетах с клавиатурой
         if h < 10 or max_w < 34:
             stdscr.addstr(0, 0, L['err_small'][:max_w])
             stdscr.refresh()
@@ -647,7 +646,6 @@ def main(stdscr):
         list_start_y = 2
         cpu, ram_str, ram_pct, load_str, procs = sys_info_cache
         
-        # Сжатие системной информации для узких экранов
         if max_w >= 85:
             sys_info_text = L['sys_info'].format(cpu, ram_str, ram_pct, load_str, procs)
         elif max_w >= 50:
@@ -671,36 +669,41 @@ def main(stdscr):
             stdscr.addstr(3, 0, "-" * max_w)
             list_start_y = 4
 
-        # Адаптивный расчет колонок
-        col_count = 2 if max_w >= 135 else 1
+        # --- НОВАЯ СИСТЕМА ДИНАМИЧЕСКИХ КОЛОНОК ---
+        # Минимально комфортная ширина колонки (символов)
+        MIN_COL_W = 40 
+        
+        # Считаем, сколько таких колонок поместится в текущую ширину
+        col_count = max(1, max_w // MIN_COL_W)
+        col_count = min(4, col_count) # Ограничим максимум 4, чтобы не рябило на сверхшироких экранах
+        
         col_w = max_w // col_count
 
-        if col_w < 40:
-            name_w = col_w - 14
+        # Высчитываем внутренние отступы внутри колонки
+        if col_w < 55:
             status_w = 10
-            rl_w = 0 # Скрываем runlevel на очень узких экранах
-        elif col_w < 60:
-            name_w = col_w - 18
-            status_w = 12
             rl_w = 0
+            name_w = max(10, col_w - status_w - 5)
         else:
-            name_w = 32
-            status_w = 15
-            rl_w = col_w - name_w - status_w - 4
+            status_w = 12
+            rl_w = 10
+            name_w = max(10, col_w - status_w - rl_w - 6)
 
         header_str = f"{L['col_service'].ljust(name_w)} {L['col_status'].ljust(status_w)}"
         if rl_w > 0:
             header_str += f" {L['col_autorun'].ljust(rl_w)}"
 
-        if col_count == 2:
-            stdscr.addstr(list_start_y, 2, header_str[:col_w - 4], curses.A_BOLD)
-            stdscr.addstr(list_start_y, 2 + col_w, header_str[:col_w - 4], curses.A_BOLD)
-        else:
-            stdscr.addstr(list_start_y, 2, header_str[:max_w-2], curses.A_BOLD)
+        # Отрисовка заголовков для каждой колонки
+        for c in range(col_count):
+            x_pos = 2 + c * col_w
+            if x_pos < max_w:
+                avail_w = min(col_w - 2, max_w - x_pos)
+                if avail_w > 0:
+                    stdscr.addstr(list_start_y, x_pos, header_str[:avail_w], curses.A_BOLD)
 
         stdscr.addstr(list_start_y + 1, 0, "-" * max_w)
 
-        # Расчет размеров лог-окна в зависимости от высоты
+        # Расчет размеров лог-окна
         if h >= 30: log_lines_count = 8
         elif h >= 22: log_lines_count = 5
         elif h >= 15: log_lines_count = 3
@@ -714,14 +717,16 @@ def main(stdscr):
         current_page = sel_idx // items_per_page if items_per_page > 0 else 0
         scroll_offset = current_page * items_per_page
 
-        # Отрисовка сервисов
+        # Отрисовка сервисов (матричная система)
         for i in range(items_per_page):
             idx = scroll_offset + i
             if idx >= len(display_services): break
             svc = display_services[idx]
 
-            row_idx = i % list_h if col_count == 2 else i
-            col_idx = i // list_h if col_count == 2 else 0
+            # Исправленный расчет координат для сетки (ранее был баг if col_count == 2)
+            row_idx = i % list_h
+            col_idx = i // list_h 
+            
             y = actual_list_start + row_idx
             x_offset = col_idx * col_w
 
@@ -730,7 +735,6 @@ def main(stdscr):
             elif "crashed" in svc['status']: status_color = curses.color_pair(3)
             elif "stopped" in svc['status']: status_color = curses.color_pair(2)
 
-            # Формирование комбинированных тегов (например, [B★] или [B↑])
             prefix_chars = []
             if svc['is_bl']: prefix_chars.append('B')
             if svc['is_fav']: prefix_chars.append('★')
@@ -948,7 +952,8 @@ def main(stdscr):
                     row = my - actual_list_start
                     col = mx // col_w
                     if col < col_count:
-                        clicked_idx = scroll_offset + (col * list_h) + row if col_count == 2 else scroll_offset + row
+                        # Фикс: мышь теперь правильно понимает любую колонку
+                        clicked_idx = scroll_offset + (col * list_h) + row
                         if clicked_idx < len(display_services):
                             if sel_idx != clicked_idx:
                                 sel_idx = clicked_idx
