@@ -188,7 +188,7 @@ def add_log(msg):
         line = line.strip()
         if line:
             log_messages.append(line)
-    
+
     if len(log_messages) > MAX_LOG_LINES:
         del log_messages[:len(log_messages) - MAX_LOG_LINES]
 
@@ -545,7 +545,7 @@ def main(stdscr):
 
     pending_action = None
     pending_payload = None
-    
+
     in_search = False
     search_query = ""
 
@@ -561,7 +561,7 @@ def main(stdscr):
             stdscr.refresh()
             stdscr.getch()
             break
-            
+
         display_services = [s for s in services if search_query.lower() in s['name'].lower()]
         if sel_idx >= len(display_services): sel_idx = max(0, len(display_services) - 1)
 
@@ -576,7 +576,7 @@ def main(stdscr):
             cpu, ram_str, ram_pct, load_str, procs = sys_info_cache
             sys_info_text = L['sys_info'].format(cpu, ram_str, ram_pct, load_str, procs)
             stdscr.addstr(2, 2, sys_info_text, curses.A_BOLD | curses.color_pair(3))
-            
+
             stdscr.addstr(4, 2, L['top_title'], curses.A_BOLD | curses.color_pair(6))
             for idx, proc in enumerate(top_procs_cache):
                 attr = curses.color_pair(4) | curses.A_BOLD if idx == 0 else curses.color_pair(6)
@@ -674,7 +674,7 @@ def main(stdscr):
             draw_colorized_log(stdscr, h - bottom_h + 2 + idx, 2, log_msg, max_w)
 
         # Подсказки и строка поиска
-        try: 
+        try:
             if in_search:
                 prompt = f"{L['search_prompt']} {search_query}█"
                 stdscr.addstr(h - 1, 0, prompt.ljust(max_w), curses.color_pair(4) | curses.A_REVERSE | curses.A_BOLD)
@@ -744,7 +744,7 @@ def main(stdscr):
             elif 32 <= key <= 126:
                 search_query += chr(key)
                 sel_idx = 0
-            continue 
+            continue
         else:
             if key == ord('/'):
                 in_search = True
@@ -795,7 +795,7 @@ def main(stdscr):
             if display_services:
                 svc_name = display_services[sel_idx]['name']
                 curr_prio = prio_dict.get(svc_name, 0)
-                new_prio = 1 if curr_prio == 0 else (-1 if curr_prio == 1 else 0)
+                new_prio = 1 if curr_prio == 0 else 0
 
                 if new_prio == 0 and svc_name in prio_dict: del prio_dict[svc_name]
                 else: prio_dict[svc_name] = new_prio
