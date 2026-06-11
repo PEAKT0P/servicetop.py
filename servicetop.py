@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 """
 ========================================================================
-   Servicetop OpenRC Manager v3.4.1 (Advanced Scroll Edition)
+   Servicetop OpenRC Manager v3.4.2 (Advanced Scroll Edition)
    Repository: https://github.com/PEAKT0P/servicetop.py
 ========================================================================
     Update/Install:
-   $ sudo rm -f /opt/servicetop/lang.json /opt/servicetop/blacklist.list /opt/servicetop/favorites.list /opt/servicetop/priority.json
+   $ sudo rm -f /opt/servicetop/lang.json
    $ sudo mkdir -p /opt/servicetop/
    $ sudo curl -o /opt/servicetop/servicetop.py https://raw.githubusercontent.com/PEAKT0P/servicetop.py/main/servicetop.py
    $ sudo chmod +x /opt/servicetop/servicetop.py
@@ -29,6 +29,9 @@ try:
     HAS_PSUTIL = True
 except ImportError:
     HAS_PSUTIL = False
+
+# Настройки
+TOP_COUNT = 5
 
 # Рабочая директория
 BASE_DIR = "/opt/servicetop"
@@ -178,21 +181,17 @@ def load_language():
         L["current_lang_code"] = "ru"
         return L
 
-# Инициализация языка при старте
 load_language()
 
 def add_log(msg):
-    """ Добавляет сообщение в лог, разбивая по строкам, и лимитирует размер. """
     global log_messages
     for line in msg.split('\n'):
         line = line.strip()
         if line:
             log_messages.append(line)
-
     if len(log_messages) > MAX_LOG_LINES:
         del log_messages[:len(log_messages) - MAX_LOG_LINES]
 
-# --- Вспомогательные функции для работы с файлами ---
 def get_list(filepath):
     if not os.path.exists(filepath): return set()
     try:
@@ -217,7 +216,6 @@ def save_dict(filepath, data):
         with open(filepath, 'w') as f: json.dump(data, f, indent=4)
     except: pass
 
-# --- Системные функции ---
 def get_sys_info():
     if HAS_PSUTIL:
         cpu = int(psutil.cpu_percent())
@@ -247,7 +245,6 @@ def get_sys_info():
             ram_str = f"{used/1024**2:.1f}G / {total/1024**2:.1f}G"
         except:
             ram_str, ram_pct = "N/A", 0
-
         try:
             procs = len([pid for pid in os.listdir('/proc') if pid.isdigit()])
         except:
@@ -257,7 +254,7 @@ def get_sys_info():
 
 def get_top_processes():
     try:
-        out = subprocess.getoutput("ps -eo pid,pcpu,pmem,comm --sort=-pcpu | head -n 6").strip().split('\n')
+        out = subprocess.getoutput(f"ps -eo pid,pcpu,pmem,comm --sort=-pcpu | head -n {TOP_COUNT + 1}").strip().split('\n')
         formatted = []
         formatted.append(f"{'PID'.ljust(8)} {'CPU%'.ljust(7)} {'MEM%'.ljust(7)} {'PROCESS'}")
         if len(out) > 1:
@@ -299,8 +296,7 @@ def get_services(favs, bl_set, prio_dict, show_blacklist):
             is_bl = file in bl_set
             prio = prio_dict.get(file, 0)
 
-            # Пропускаем, если сервис в blacklist и режим отображения скрыт (но избранные показываем всегда)
-            if is_bl and not show_blacklist and not is_fav:
+            if is_bl and not show_blacklist and not is_fav and prio == 0:
                 continue
 
             services.append({
@@ -312,12 +308,10 @@ def get_services(favs, bl_set, prio_dict, show_blacklist):
                 "priority": prio
             })
 
-    # Сортировка: Избранное -> Приоритет(Высокий=1, Обычный=0, Низкий=-1) -> Имя
     services.sort(key=lambda x: (not x['is_fav'], -x['priority'], x['name']))
     return services
 
 def fix_openrc_logs(text):
-    """ Разделяет склеенные логи OpenRC на новые строки (напр: [ ok ] * samba...) """
     return re.sub(r'(\[\s*(?:ok|!!|fail)\s*\])\s*(?=\*)', r'\1\n', text)
 
 def execute_command(cmd):
@@ -351,8 +345,10 @@ def draw_colorized_log(stdscr, y, x, msg, max_w):
 
 def show_confirm_dialog(stdscr, svc_name):
     h, w = stdscr.getmaxyx()
-    dh, dw = 7, 50
-    dy, dx = (h - dh) // 2, (w - dw) // 2
+    dh = min(7, h - 2)
+    dw = min(50, w - 2)
+    dy, dx = max(0, (h - dh) // 2), max(0, (w - dw) // 2)
+    
     win = curses.newwin(dh, dw, dy, dx)
     win.keypad(True)
     win.bkgd(' ', curses.color_pair(2) | curses.A_BOLD)
@@ -361,12 +357,13 @@ def show_confirm_dialog(stdscr, svc_name):
     while True:
         win.erase()
         win.box()
-        win.addstr(1, 2, L['warn_title'].center(dw-4), curses.A_BOLD | curses.color_pair(5))
+        win.addstr(1, 2, L['warn_title'].center(dw-4)[:dw-4], curses.A_BOLD | curses.color_pair(5))
         for i, line in enumerate(lines):
-            win.addstr(3+i, 2, line.center(dw-4))
+            if 3 + i < dh - 2:
+                win.addstr(3+i, 2, line.center(dw-4)[:dw-4])
 
-        hint = f"{L['btn_yes']}     {L['btn_no']}"
-        win.addstr(dh-2, (dw-len(hint))//2, hint, curses.A_BOLD)
+        hint = f"{L['btn_yes']}   {L['btn_no']}"
+        win.addstr(dh-2, (dw-len(hint))//2, hint[:dw-4], curses.A_BOLD)
 
         win.refresh()
         k = win.getch()
@@ -380,8 +377,10 @@ def show_confirm_dialog(stdscr, svc_name):
 
 def show_info_panel(stdscr, svc):
     h, w = stdscr.getmaxyx()
-    dh, dw = 11, 40
-    dy, dx = (h - dh) // 2, (w - dw) // 2
+    dh = min(11, h - 2)
+    dw = min(40, w - 2)
+    dy, dx = max(0, (h - dh) // 2), max(0, (w - dw) // 2)
+    
     win = curses.newwin(dh, dw, dy, dx)
     win.keypad(True)
     win.bkgd(' ', curses.color_pair(5))
@@ -412,13 +411,20 @@ def show_info_panel(stdscr, svc):
         win.box()
         win.addstr(1, 2, L['info_title'].format(svc['name'])[:dw-4], curses.A_BOLD)
         win.addstr(2, 2, "="*(dw-4))
-        win.addstr(3, 2, L['info_status'].format(svc['status']))
-        win.addstr(4, 2, L['info_rl'].format(svc['runlevel'] or '-'))
-        win.addstr(5, 2, L['info_fav'].format(L['yes'] if svc['is_fav'] else L['no']))
-        win.addstr(6, 2, L['info_bl'].format(L['yes'] if svc['is_bl'] else L['no']))
-        win.addstr(7, 2, L['info_prio'].format(prio_map.get(svc['priority'], L['prio_norm'])))
-        win.addstr(8, 2, L['info_pid'].format(pid))
-        win.addstr(9, 2, L['info_uptime'].format(uptime))
+        
+        info_lines = [
+            L['info_status'].format(svc['status']),
+            L['info_rl'].format(svc['runlevel'] or '-'),
+            L['info_fav'].format(L['yes'] if svc['is_fav'] else L['no']),
+            L['info_bl'].format(L['yes'] if svc['is_bl'] else L['no']),
+            L['info_prio'].format(prio_map.get(svc['priority'], L['prio_norm'])),
+            L['info_pid'].format(pid),
+            L['info_uptime'].format(uptime)
+        ]
+        
+        for i, text in enumerate(info_lines):
+            if i + 3 < dh - 1:
+                win.addstr(i + 3, 2, text[:dw-4])
 
         win.refresh()
         k = win.getch()
@@ -431,8 +437,9 @@ def show_info_panel(stdscr, svc):
 
 def show_action_menu(stdscr, service):
     h, w = stdscr.getmaxyx()
-    menu_h, menu_w = 11, 54
-    menu_y, menu_x = (h - menu_h) // 2, (w - menu_w) // 2
+    menu_h = min(11, h - 2)
+    menu_w = min(54, w - 2)
+    menu_y, menu_x = max(0, (h - menu_h) // 2), max(0, (w - menu_w) // 2)
 
     win = curses.newwin(menu_h, menu_w, menu_y, menu_x)
     win.keypad(True)
@@ -463,23 +470,26 @@ def show_action_menu(stdscr, service):
     while True:
         win.erase()
         win.box()
-        win.addstr(1, 2, L.get('menu_title', ' Управление: {} ').format(service['name']), curses.A_BOLD | curses.color_pair(5))
+        title_text = L.get('menu_title', ' Управление: {} ').format(service['name'])
+        win.addstr(1, 2, title_text[:menu_w-4], curses.A_BOLD | curses.color_pair(5))
         win.addstr(2, 2, "="*(menu_w-4), curses.color_pair(5))
 
         for idx, (label, act_type, _) in enumerate(actions):
+            if idx + 3 >= menu_h - 1: break
             if idx == sel_idx:
                 attr = curses.color_pair(4) | curses.A_DIM if in_submenu else curses.color_pair(4)
             else:
                 attr = curses.color_pair(5)
 
-            win.addstr(3 + idx, 4, f" {label} ".ljust(menu_w-8), attr)
+            safe_label = f" {label} "[:menu_w-8]
+            win.addstr(3 + idx, 4, safe_label.ljust(menu_w-8), attr)
 
         win.refresh()
 
         sub_y, sub_x, sub_h, sub_w = 0, 0, 0, 0
         if in_submenu:
-            sub_h = len(runlevels) + 2
-            sub_w = 17
+            sub_h = min(len(runlevels) + 2, h - 2)
+            sub_w = min(17, w - 2)
             sub_y = menu_y + 3 + sel_idx
             sub_x = menu_x + menu_w - 2
 
@@ -492,8 +502,9 @@ def show_action_menu(stdscr, service):
             sub_win.box()
 
             for i, rl in enumerate(runlevels):
+                if 1 + i >= sub_h - 1: break
                 attr = curses.color_pair(4) if i == sub_idx else curses.color_pair(5)
-                sub_win.addstr(1 + i, 2, f" {rl} ".ljust(sub_w-4), attr)
+                sub_win.addstr(1 + i, 2, f" {rl} "[:sub_w-4].ljust(sub_w-4), attr)
 
             sub_win.refresh()
             key = sub_win.getch()
@@ -604,15 +615,20 @@ def main(stdscr):
     in_search = False
     search_query = ""
 
-    CRITICAL_SERVICES = ["sshd", "network"]
+    CRITICAL_SERVICES = [
+        "sshd", "network", "netmount", "net.lo", "net.br0",
+        "iptables", "iptables-manager", "nftables", "ufw", "firewalld",
+        "dnsmasq", "docker", "containerd"
+    ]
 
     while True:
         stdscr.erase()
         h, w = stdscr.getmaxyx()
         max_w = w - 1
 
-        if h < 24 or max_w < 70:
-            stdscr.addstr(0, 0, L['err_small'])
+        # Полная адаптивность: снижены лимиты для корректной работы на смартфонах/планшетах с клавиатурой
+        if h < 10 or max_w < 34:
+            stdscr.addstr(0, 0, L['err_small'][:max_w])
             stdscr.refresh()
             stdscr.getch()
             break
@@ -621,45 +637,81 @@ def main(stdscr):
         if sel_idx >= len(display_services): sel_idx = max(0, len(display_services) - 1)
 
         # Заголовок
-        stdscr.addstr(0, 0, L['title'].center(max_w), curses.color_pair(4) | curses.A_BOLD)
+        stdscr.addstr(0, 0, L['title'].center(max_w)[:max_w], curses.color_pair(4) | curses.A_BOLD)
         stdscr.addstr(1, 0, "-" * max_w)
 
-        # TOP процессов и Мониторинг
-        show_top = h >= 32
-        list_start_y = 3
-        if show_top:
-            cpu, ram_str, ram_pct, load_str, procs = sys_info_cache
-            sys_info_text = L['sys_info'].format(cpu, ram_str, ram_pct, load_str, procs)
-            stdscr.addstr(2, 2, sys_info_text, curses.A_BOLD | curses.color_pair(3))
+        # Логика адаптивного отображения модулей
+        show_top = h >= 26 and max_w >= 50
+        show_sysinfo = h >= 14
 
-            stdscr.addstr(4, 2, L['top_title'], curses.A_BOLD | curses.color_pair(6))
+        list_start_y = 2
+        cpu, ram_str, ram_pct, load_str, procs = sys_info_cache
+        
+        # Сжатие системной информации для узких экранов
+        if max_w >= 85:
+            sys_info_text = L['sys_info'].format(cpu, ram_str, ram_pct, load_str, procs)
+        elif max_w >= 50:
+            sys_info_text = f"CPU: {cpu}% | RAM: {ram_pct}% ({ram_str}) | LOAD: {load_str}"
+        else:
+            sys_info_text = f"C: {cpu}% R: {ram_pct}% L: {load_str.split()[0]}"
+
+        if show_sysinfo and show_top:
+            stdscr.addstr(2, 2, sys_info_text[:max_w-4], curses.A_BOLD | curses.color_pair(3))
+            
+            top_title_dyn = L['top_title'].replace("TOP-5", f"TOP-{TOP_COUNT}")
+            stdscr.addstr(4, 2, top_title_dyn[:max_w-4], curses.A_BOLD | curses.color_pair(6))
             for idx, proc in enumerate(top_procs_cache):
                 attr = curses.color_pair(4) | curses.A_BOLD if idx == 0 else curses.color_pair(6)
                 stdscr.addstr(5 + idx, 4, proc[:max_w-8], attr)
-            stdscr.addstr(11, 0, "-" * max_w)
-            list_start_y = 12
+            
+            stdscr.addstr(5 + len(top_procs_cache), 0, "-" * max_w)
+            list_start_y = 6 + len(top_procs_cache)
+        elif show_sysinfo:
+            stdscr.addstr(2, 2, sys_info_text[:max_w-4], curses.A_BOLD | curses.color_pair(3))
+            stdscr.addstr(3, 0, "-" * max_w)
+            list_start_y = 4
 
-        # Заголовки таблицы
+        # Адаптивный расчет колонок
         col_count = 2 if max_w >= 135 else 1
         col_w = max_w // col_count
-        header_str = f"{L['col_service'].ljust(32)} {L['col_status'].ljust(15)} {L['col_autorun']}"
+
+        if col_w < 40:
+            name_w = col_w - 14
+            status_w = 10
+            rl_w = 0 # Скрываем runlevel на очень узких экранах
+        elif col_w < 60:
+            name_w = col_w - 18
+            status_w = 12
+            rl_w = 0
+        else:
+            name_w = 32
+            status_w = 15
+            rl_w = col_w - name_w - status_w - 4
+
+        header_str = f"{L['col_service'].ljust(name_w)} {L['col_status'].ljust(status_w)}"
+        if rl_w > 0:
+            header_str += f" {L['col_autorun'].ljust(rl_w)}"
 
         if col_count == 2:
             stdscr.addstr(list_start_y, 2, header_str[:col_w - 4], curses.A_BOLD)
             stdscr.addstr(list_start_y, 2 + col_w, header_str[:col_w - 4], curses.A_BOLD)
         else:
-            stdscr.addstr(list_start_y, 2, header_str, curses.A_BOLD)
+            stdscr.addstr(list_start_y, 2, header_str[:max_w-2], curses.A_BOLD)
 
         stdscr.addstr(list_start_y + 1, 0, "-" * max_w)
 
-        # Расчет размеров
-        log_lines_count = 8 if h >= 28 else 6
+        # Расчет размеров лог-окна в зависимости от высоты
+        if h >= 30: log_lines_count = 8
+        elif h >= 22: log_lines_count = 5
+        elif h >= 15: log_lines_count = 3
+        else: log_lines_count = 1
+
         bottom_h = log_lines_count + 3
         actual_list_start = list_start_y + 2
-        list_h = h - actual_list_start - bottom_h
+        list_h = max(1, h - actual_list_start - bottom_h)
         items_per_page = list_h * col_count
 
-        current_page = sel_idx // items_per_page
+        current_page = sel_idx // items_per_page if items_per_page > 0 else 0
         scroll_offset = current_page * items_per_page
 
         # Отрисовка сервисов
@@ -678,52 +730,62 @@ def main(stdscr):
             elif "crashed" in svc['status']: status_color = curses.color_pair(3)
             elif "stopped" in svc['status']: status_color = curses.color_pair(2)
 
-            prefix = "   "
+            # Формирование комбинированных тегов (например, [B★] или [B↑])
+            prefix_chars = []
+            if svc['is_bl']: prefix_chars.append('B')
+            if svc['is_fav']: prefix_chars.append('★')
+            elif svc['priority'] == 1: prefix_chars.append('↑')
+            elif svc['priority'] == -1: prefix_chars.append('↓')
+
+            if prefix_chars: prefix = f"[{''.join(prefix_chars)}]"
+            else: prefix = "   "
+
             name_color = curses.color_pair(6)
-            prefix_color = name_color
+            prefix_color = curses.color_pair(6)
 
             if svc['is_fav'] and svc['priority'] == 1:
-                prefix = "[★]"
                 prefix_color = curses.color_pair(8) | curses.A_BOLD
                 name_color = curses.color_pair(3) | curses.A_BOLD
             elif svc['is_fav']:
-                prefix = "[★]"
+                prefix_color = curses.color_pair(3) | curses.A_BOLD
                 name_color = curses.color_pair(3) | curses.A_BOLD
-                prefix_color = name_color
-            elif svc['is_bl']:
-                prefix = "[B]"
+            elif svc['is_bl'] and not svc['is_fav']:
+                prefix_color = curses.color_pair(6) | curses.A_DIM
                 name_color = curses.color_pair(6) | curses.A_DIM
-                prefix_color = name_color
             elif svc['priority'] == 1:
-                prefix = "[↑]"
+                prefix_color = curses.color_pair(4) | curses.A_BOLD
                 name_color = curses.color_pair(4) | curses.A_BOLD
-                prefix_color = name_color
             elif svc['priority'] == -1:
-                prefix = "[↓]"
+                prefix_color = curses.color_pair(6) | curses.A_DIM
                 name_color = curses.color_pair(6) | curses.A_DIM
-                prefix_color = name_color
 
-            safe_status = svc['status'][:13]
-            safe_runlevel = svc['runlevel'][:15]
+            safe_status = svc['status'][:status_w]
+            safe_runlevel = svc['runlevel'][:rl_w] if rl_w > 0 else ""
+
+            name_x = x_offset + 2 + len(prefix) + 1
+            status_x = x_offset + 2 + name_w + 1
+            rl_x = status_x + status_w + 1
 
             if idx == sel_idx:
                 stdscr.addstr(y, x_offset, " " * (col_w - 1), curses.color_pair(4) | curses.A_REVERSE)
-                safe_name = f"{prefix} {svc['name']}"[:32]
-                stdscr.addstr(y, x_offset + 2, safe_name.ljust(32), curses.color_pair(4) | curses.A_REVERSE | curses.A_BOLD)
-                stdscr.addstr(y, x_offset + 35, safe_status.ljust(15), curses.color_pair(4) | curses.A_REVERSE)
-                stdscr.addstr(y, x_offset + 51, safe_runlevel, curses.color_pair(4) | curses.A_REVERSE)
+                safe_name = f"{prefix} {svc['name']}"[:name_w]
+                stdscr.addstr(y, x_offset + 2, safe_name.ljust(name_w), curses.color_pair(4) | curses.A_REVERSE | curses.A_BOLD)
+                stdscr.addstr(y, status_x, safe_status.ljust(status_w), curses.color_pair(4) | curses.A_REVERSE)
+                if rl_w > 0:
+                    stdscr.addstr(y, rl_x, safe_runlevel.ljust(rl_w), curses.color_pair(4) | curses.A_REVERSE)
             else:
                 stdscr.addstr(y, x_offset + 2, prefix, prefix_color)
-                space_left = 32 - len(prefix) - 1
+                space_left = max(0, name_w - len(prefix) - 1)
                 safe_name_only = svc['name'][:space_left]
-                stdscr.addstr(y, x_offset + 2 + len(prefix) + 1, safe_name_only.ljust(space_left), name_color)
-                stdscr.addstr(y, x_offset + 35, safe_status.ljust(15), status_color | curses.A_BOLD)
-                stdscr.addstr(y, x_offset + 51, safe_runlevel, curses.color_pair(3))
+                stdscr.addstr(y, name_x, safe_name_only.ljust(space_left), name_color)
+                stdscr.addstr(y, status_x, safe_status.ljust(status_w), status_color | curses.A_BOLD)
+                if rl_w > 0:
+                    stdscr.addstr(y, rl_x, safe_runlevel[:rl_w], curses.color_pair(3))
 
         # Окно логов
         stdscr.addstr(h - bottom_h, 0, "-" * max_w)
         bl_ind = f" ({L['shown']})" if show_blacklist else ""
-        stdscr.addstr(h - bottom_h + 1, 2, L['log_title'] + bl_ind, curses.A_BOLD | curses.color_pair(6))
+        stdscr.addstr(h - bottom_h + 1, 2, (L['log_title'] + bl_ind)[:max_w-4], curses.A_BOLD | curses.color_pair(6))
 
         for idx, log_msg in enumerate(log_messages[-log_lines_count:]):
             draw_colorized_log(stdscr, h - bottom_h + 2 + idx, 2, log_msg, max_w)
@@ -732,7 +794,7 @@ def main(stdscr):
         try:
             if in_search:
                 prompt = f"{L['search_prompt']} {search_query}█"
-                stdscr.addstr(h - 1, 0, prompt.ljust(max_w), curses.color_pair(4) | curses.A_REVERSE | curses.A_BOLD)
+                stdscr.addstr(h - 1, 0, prompt[:max_w].ljust(max_w), curses.color_pair(4) | curses.A_REVERSE | curses.A_BOLD)
             else:
                 if search_query:
                     hint = f"{L['search_prompt']} '{search_query}' " + L['bottom_hint']
@@ -897,4 +959,7 @@ def main(stdscr):
             except curses.error: pass
 
 if __name__ == "__main__":
-    curses.wrapper(main)
+    try:
+        curses.wrapper(main)
+    except KeyboardInterrupt:
+        pass
