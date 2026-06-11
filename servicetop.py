@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 """
 ========================================================================
-   Servicetop OpenRC Manager v3.4 (Advanced Edition)
+   Servicetop OpenRC Manager v3.4.1 (Advanced Scroll Edition)
    Repository: https://github.com/PEAKT0P/servicetop.py
 ========================================================================
     Update/Install:
-   $ sudo rm -f /opt/servicetop/lang.json
+   $ sudo rm -f /opt/servicetop/lang.json /opt/servicetop/blacklist.list /opt/servicetop/favorites.list /opt/servicetop/priority.json
    $ sudo mkdir -p /opt/servicetop/
    $ sudo curl -o /opt/servicetop/servicetop.py https://raw.githubusercontent.com/PEAKT0P/servicetop.py/main/servicetop.py
    $ sudo chmod +x /opt/servicetop/servicetop.py
@@ -372,6 +372,11 @@ def show_confirm_dialog(stdscr, svc_name):
         k = win.getch()
         if k in (ord('y'), ord('Y')): return True
         if k in (ord('n'), ord('N'), 27, 10, 13): return False
+        if k == curses.KEY_MOUSE:
+            try:
+                curses.getmouse()
+                return False
+            except curses.error: pass
 
 def show_info_panel(stdscr, svc):
     h, w = stdscr.getmaxyx()
@@ -418,6 +423,11 @@ def show_info_panel(stdscr, svc):
         win.refresh()
         k = win.getch()
         if k in (27, 10, 13, ord('i'), ord('I')): break
+        if k == curses.KEY_MOUSE:
+            try:
+                curses.getmouse()
+                break
+            except curses.error: pass
 
 def show_action_menu(stdscr, service):
     h, w = stdscr.getmaxyx()
@@ -447,6 +457,9 @@ def show_action_menu(stdscr, service):
     sub_idx = 0
     runlevels = ["default", "boot", "nonetwork", "shutdown", "sysinit"]
 
+    BUTTON4 = getattr(curses, 'BUTTON4_PRESSED', 65536)
+    BUTTON5 = getattr(curses, 'BUTTON5_PRESSED', 2097152)
+
     while True:
         win.erase()
         win.box()
@@ -463,6 +476,7 @@ def show_action_menu(stdscr, service):
 
         win.refresh()
 
+        sub_y, sub_x, sub_h, sub_w = 0, 0, 0, 0
         if in_submenu:
             sub_h = len(runlevels) + 2
             sub_w = 17
@@ -485,6 +499,44 @@ def show_action_menu(stdscr, service):
             key = sub_win.getch()
         else:
             key = win.getch()
+
+        if key == curses.KEY_MOUSE:
+            try:
+                _, mx, my, _, bstate = curses.getmouse()
+
+                if bstate & BUTTON4:
+                    if in_submenu and sub_idx > 0: sub_idx -= 1
+                    elif not in_submenu and sel_idx > 0: sel_idx -= 1
+                elif bstate & BUTTON5:
+                    if in_submenu and sub_idx < len(runlevels) - 1: sub_idx += 1
+                    elif not in_submenu and sel_idx < len(actions) - 1: sel_idx += 1
+                elif bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED | curses.BUTTON1_PRESSED):
+                    if in_submenu:
+                        if sub_y + 1 <= my < sub_y + 1 + len(runlevels) and sub_x <= mx <= sub_x + sub_w:
+                            sub_idx = int(my - (sub_y + 1))
+                            op = actions[sel_idx][2]
+                            rl = runlevels[sub_idx]
+                            return "CMD", f"rc-update {op} {service['name']} {rl}"
+                        else:
+                            in_submenu = False
+                            stdscr.touchwin()
+                            stdscr.refresh()
+                    else:
+                        if menu_y + 3 <= my < menu_y + 3 + len(actions) and menu_x <= mx <= menu_x + menu_w:
+                            sel_idx = int(my - (menu_y + 3))
+                            act_type = actions[sel_idx][1]
+                            if act_type == "SUBMENU":
+                                in_submenu = True
+                                sub_idx = 0
+                            elif act_type == "CANCEL":
+                                return "CANCEL", ""
+                            else:
+                                return act_type, actions[sel_idx][2]
+                        elif not (menu_y <= my <= menu_y + menu_h and menu_x <= mx <= menu_x + menu_w):
+                            return "CANCEL", ""
+            except curses.error:
+                pass
+            continue
 
         if in_submenu:
             if key == curses.KEY_UP and sub_idx > 0: sub_idx -= 1
@@ -517,7 +569,10 @@ def main(stdscr):
     curses.curs_set(0)
     stdscr.keypad(True)
     stdscr.timeout(2000)
-    curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
+
+    BUTTON4 = getattr(curses, 'BUTTON4_PRESSED', 65536)
+    BUTTON5 = getattr(curses, 'BUTTON5_PRESSED', 2097152)
+    curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION | BUTTON4 | BUTTON5)
 
     curses.start_color()
     curses.use_default_colors()
@@ -822,7 +877,12 @@ def main(stdscr):
         elif key == curses.KEY_MOUSE:
             try:
                 _, mx, my, _, bstate = curses.getmouse()
-                if actual_list_start <= my < actual_list_start + list_h:
+
+                if bstate & BUTTON4:
+                    if sel_idx > 0: sel_idx -= 1
+                elif bstate & BUTTON5:
+                    if sel_idx < len(display_services) - 1: sel_idx += 1
+                elif actual_list_start <= my < actual_list_start + list_h:
                     row = my - actual_list_start
                     col = mx // col_w
                     if col < col_count:
