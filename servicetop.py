@@ -86,8 +86,8 @@ DEFAULT_LANG_DATA = {
         "msg_lang_en": "Язык переключен на English",
         "warn_title": " ВНИМАНИЕ ",
         "warn_crit": "Остановка критического сервиса может\nнарушить работу системы.\nПродолжить?",
-        "btn_yes": "[Y] Да",
-        "btn_no": "[N] Нет",
+        "btn_yes": "[Y/Д] Да",
+        "btn_no": "[N/Н] Нет",
         "info_title": " Информация: {} ",
         "info_status": "Статус: {}",
         "info_rl": "Runlevel: {}",
@@ -182,6 +182,15 @@ def load_language():
         return L
 
 load_language()
+
+def safe_addstr(win, y, x, text, attr=None):
+    try:
+        if attr is not None:
+            win.addstr(y, x, text, attr)
+        else:
+            win.addstr(y, x, text)
+    except curses.error:
+        pass
 
 def add_log(msg):
     global log_messages
@@ -348,7 +357,7 @@ def show_confirm_dialog(stdscr, svc_name):
     dh = min(7, h - 2)
     dw = min(50, w - 2)
     dy, dx = max(0, (h - dh) // 2), max(0, (w - dw) // 2)
-    
+
     win = curses.newwin(dh, dw, dy, dx)
     win.keypad(True)
     win.bkgd(' ', curses.color_pair(2) | curses.A_BOLD)
@@ -357,30 +366,39 @@ def show_confirm_dialog(stdscr, svc_name):
     while True:
         win.erase()
         win.box()
-        win.addstr(1, 2, L['warn_title'].center(dw-4)[:dw-4], curses.A_BOLD | curses.color_pair(5))
+        safe_addstr(win, 1, 2, L['warn_title'].center(dw-4)[:dw-4], curses.A_BOLD | curses.color_pair(5))
         for i, line in enumerate(lines):
             if 3 + i < dh - 2:
-                win.addstr(3+i, 2, line.center(dw-4)[:dw-4])
+                safe_addstr(win, 3+i, 2, line.center(dw-4)[:dw-4])
 
         hint = f"{L['btn_yes']}   {L['btn_no']}"
-        win.addstr(dh-2, (dw-len(hint))//2, hint[:dw-4], curses.A_BOLD)
+        safe_addstr(win, dh-2, (dw-len(hint))//2, hint[:dw-4], curses.A_BOLD)
 
         win.refresh()
-        k = win.getch()
-        if k in (ord('y'), ord('Y')): return True
-        if k in (ord('n'), ord('N'), 27, 10, 13): return False
-        if k == curses.KEY_MOUSE:
-            try:
-                curses.getmouse()
-                return False
-            except curses.error: pass
+        
+        try:
+            k = win.get_wch()
+        except curses.error:
+            continue
+            
+        if isinstance(k, str):
+            kl = k.lower()
+            if kl in ('y', 'д'): return True
+            if kl in ('n', 'н', '\x1b', '\n', '\r'): return False
+        else:
+            if k in (curses.KEY_ENTER, 10, 13, 27): return False
+            if k == curses.KEY_MOUSE:
+                try:
+                    curses.getmouse()
+                    return False
+                except curses.error: pass
 
 def show_info_panel(stdscr, svc):
     h, w = stdscr.getmaxyx()
     dh = min(11, h - 2)
     dw = min(40, w - 2)
     dy, dx = max(0, (h - dh) // 2), max(0, (w - dw) // 2)
-    
+
     win = curses.newwin(dh, dw, dy, dx)
     win.keypad(True)
     win.bkgd(' ', curses.color_pair(5))
@@ -409,9 +427,9 @@ def show_info_panel(stdscr, svc):
     while True:
         win.erase()
         win.box()
-        win.addstr(1, 2, L['info_title'].format(svc['name'])[:dw-4], curses.A_BOLD)
-        win.addstr(2, 2, "="*(dw-4))
-        
+        safe_addstr(win, 1, 2, L['info_title'].format(svc['name'])[:dw-4], curses.A_BOLD)
+        safe_addstr(win, 2, 2, "="*(dw-4))
+
         info_lines = [
             L['info_status'].format(svc['status']),
             L['info_rl'].format(svc['runlevel'] or '-'),
@@ -421,15 +439,20 @@ def show_info_panel(stdscr, svc):
             L['info_pid'].format(pid),
             L['info_uptime'].format(uptime)
         ]
-        
+
         for i, text in enumerate(info_lines):
             if i + 3 < dh - 1:
-                win.addstr(i + 3, 2, text[:dw-4])
+                safe_addstr(win, i + 3, 2, text[:dw-4])
 
         win.refresh()
-        k = win.getch()
-        if k in (27, 10, 13, ord('i'), ord('I')): break
-        if k == curses.KEY_MOUSE:
+        try:
+            k = win.get_wch()
+        except curses.error:
+            continue
+            
+        is_esc_enter = (isinstance(k, str) and k in ('\n', '\r', '\x1b')) or (isinstance(k, int) and k in (curses.KEY_ENTER, 10, 13, 27))
+        if is_esc_enter or (isinstance(k, str) and k.lower() in ('i', 'ш')): break
+        if isinstance(k, int) and k == curses.KEY_MOUSE:
             try:
                 curses.getmouse()
                 break
@@ -437,14 +460,7 @@ def show_info_panel(stdscr, svc):
 
 def show_action_menu(stdscr, service):
     h, w = stdscr.getmaxyx()
-    menu_h = min(11, h - 2)
-    menu_w = min(54, w - 2)
-    menu_y, menu_x = max(0, (h - menu_h) // 2), max(0, (w - menu_w) // 2)
-
-    win = curses.newwin(menu_h, menu_w, menu_y, menu_x)
-    win.keypad(True)
-    win.bkgd(' ', curses.color_pair(5))
-
+    
     lbl_add = L.get('act_add_auto', 'Добавить в автозапуск').replace(' ►', '') + ' ►'
     lbl_del = L.get('act_del_auto', 'Удалить из автозапуска').replace(' ►', '') + ' ►'
 
@@ -458,6 +474,14 @@ def show_action_menu(stdscr, service):
         (lbl_del, "SUBMENU", "del"),
         (L.get('act_cancel', 'Отмена'), "CANCEL", "")
     ]
+    
+    menu_h = min(len(actions) + 4, h - 2)
+    menu_w = min(54, w - 2)
+    menu_y, menu_x = max(0, (h - menu_h) // 2), max(0, (w - menu_w) // 2)
+
+    win = curses.newwin(menu_h, menu_w, menu_y, menu_x)
+    win.keypad(True)
+    win.bkgd(' ', curses.color_pair(5))
 
     sel_idx = 0
     in_submenu = False
@@ -471,8 +495,8 @@ def show_action_menu(stdscr, service):
         win.erase()
         win.box()
         title_text = L.get('menu_title', ' Управление: {} ').format(service['name'])
-        win.addstr(1, 2, title_text[:menu_w-4], curses.A_BOLD | curses.color_pair(5))
-        win.addstr(2, 2, "="*(menu_w-4), curses.color_pair(5))
+        safe_addstr(win, 1, 2, title_text[:menu_w-4], curses.A_BOLD | curses.color_pair(5))
+        safe_addstr(win, 2, 2, "="*(menu_w-4), curses.color_pair(5))
 
         for idx, (label, act_type, _) in enumerate(actions):
             if idx + 3 >= menu_h - 1: break
@@ -482,7 +506,7 @@ def show_action_menu(stdscr, service):
                 attr = curses.color_pair(5)
 
             safe_label = f" {label} "[:menu_w-8]
-            win.addstr(3 + idx, 4, safe_label.ljust(menu_w-8), attr)
+            safe_addstr(win, 3 + idx, 4, safe_label.ljust(menu_w-8), attr)
 
         win.refresh()
 
@@ -504,14 +528,25 @@ def show_action_menu(stdscr, service):
             for i, rl in enumerate(runlevels):
                 if 1 + i >= sub_h - 1: break
                 attr = curses.color_pair(4) if i == sub_idx else curses.color_pair(5)
-                sub_win.addstr(1 + i, 2, f" {rl} "[:sub_w-4].ljust(sub_w-4), attr)
+                safe_addstr(sub_win, 1 + i, 2, f" {rl} "[:sub_w-4].ljust(sub_w-4), attr)
 
             sub_win.refresh()
-            key = sub_win.getch()
+            try:
+                key = sub_win.get_wch()
+            except curses.error:
+                continue
         else:
-            key = win.getch()
+            try:
+                key = win.get_wch()
+            except curses.error:
+                continue
+                
+        is_enter = (isinstance(key, str) and key in ('\n', '\r')) or (isinstance(key, int) and key in (curses.KEY_ENTER, 10, 13))
+        is_esc = (isinstance(key, str) and key == '\x1b') or (isinstance(key, int) and key == 27)
 
-        if key == curses.KEY_MOUSE:
+        max_visible_idx = min(len(actions), menu_h - 4)
+
+        if isinstance(key, int) and key == curses.KEY_MOUSE:
             try:
                 _, mx, my, _, bstate = curses.getmouse()
 
@@ -520,7 +555,7 @@ def show_action_menu(stdscr, service):
                     elif not in_submenu and sel_idx > 0: sel_idx -= 1
                 elif bstate & BUTTON5:
                     if in_submenu and sub_idx < len(runlevels) - 1: sub_idx += 1
-                    elif not in_submenu and sel_idx < len(actions) - 1: sel_idx += 1
+                    elif not in_submenu and sel_idx < max_visible_idx - 1: sel_idx += 1
                 elif bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED | curses.BUTTON1_PRESSED):
                     if in_submenu:
                         if sub_y + 1 <= my < sub_y + 1 + len(runlevels) and sub_x <= mx <= sub_x + sub_w:
@@ -533,7 +568,7 @@ def show_action_menu(stdscr, service):
                             stdscr.touchwin()
                             stdscr.refresh()
                     else:
-                        if menu_y + 3 <= my < menu_y + 3 + len(actions) and menu_x <= mx <= menu_x + menu_w:
+                        if menu_y + 3 <= my < menu_y + 3 + max_visible_idx and menu_x <= mx <= menu_x + menu_w:
                             sel_idx = int(my - (menu_y + 3))
                             act_type = actions[sel_idx][1]
                             if act_type == "SUBMENU":
@@ -550,30 +585,30 @@ def show_action_menu(stdscr, service):
             continue
 
         if in_submenu:
-            if key == curses.KEY_UP and sub_idx > 0: sub_idx -= 1
-            elif key == curses.KEY_DOWN and sub_idx < len(runlevels) - 1: sub_idx += 1
-            elif key in (curses.KEY_LEFT, 27):
+            if isinstance(key, int) and key == curses.KEY_UP and sub_idx > 0: sub_idx -= 1
+            elif isinstance(key, int) and key == curses.KEY_DOWN and sub_idx < len(runlevels) - 1: sub_idx += 1
+            elif (isinstance(key, int) and key == curses.KEY_LEFT) or is_esc:
                 in_submenu = False
                 stdscr.touchwin()
                 stdscr.refresh()
-            elif key in [curses.KEY_ENTER, 10, 13]:
+            elif is_enter:
                 op = actions[sel_idx][2]
                 rl = runlevels[sub_idx]
                 return "CMD", f"rc-update {op} {service['name']} {rl}"
         else:
-            if key == curses.KEY_UP and sel_idx > 0: sel_idx -= 1
-            elif key == curses.KEY_DOWN and sel_idx < len(actions) - 1: sel_idx += 1
-            elif key == curses.KEY_RIGHT and actions[sel_idx][1] == "SUBMENU":
+            if isinstance(key, int) and key == curses.KEY_UP and sel_idx > 0: sel_idx -= 1
+            elif isinstance(key, int) and key == curses.KEY_DOWN and sel_idx < max_visible_idx - 1: sel_idx += 1
+            elif isinstance(key, int) and key == curses.KEY_RIGHT and actions[sel_idx][1] == "SUBMENU":
                 in_submenu = True
                 sub_idx = 0
-            elif key in [curses.KEY_ENTER, 10, 13]:
+            elif is_enter:
                 act_type = actions[sel_idx][1]
                 if act_type == "SUBMENU":
                     op = actions[sel_idx][2]
                     return "CMD", f"rc-update {op} {service['name']} default"
                 else:
                     return act_type, actions[sel_idx][2]
-            elif key == 27:
+            elif is_esc:
                 return "CANCEL", ""
 
 def main(stdscr):
@@ -618,7 +653,8 @@ def main(stdscr):
     CRITICAL_SERVICES = [
         "sshd", "network", "netmount", "net.lo", "net.br0",
         "iptables", "iptables-manager", "nftables", "ufw", "firewalld",
-        "dnsmasq", "docker", "containerd"
+        "dnsmasq", "docker", "containerd", "tailscaled", "kubelet", 
+        "podman", "libvirtd", "keepalived", "bird", "wireguard", "wg-quick"
     ]
 
     while True:
@@ -627,7 +663,7 @@ def main(stdscr):
         max_w = w - 1
 
         if h < 10 or max_w < 34:
-            stdscr.addstr(0, 0, L['err_small'][:max_w])
+            safe_addstr(stdscr, 0, 0, L['err_small'][:max_w])
             stdscr.refresh()
             stdscr.getch()
             break
@@ -635,17 +671,15 @@ def main(stdscr):
         display_services = [s for s in services if search_query.lower() in s['name'].lower()]
         if sel_idx >= len(display_services): sel_idx = max(0, len(display_services) - 1)
 
-        # Заголовок
-        stdscr.addstr(0, 0, L['title'].center(max_w)[:max_w], curses.color_pair(4) | curses.A_BOLD)
-        stdscr.addstr(1, 0, "-" * max_w)
+        safe_addstr(stdscr, 0, 0, L['title'].center(max_w)[:max_w], curses.color_pair(4) | curses.A_BOLD)
+        safe_addstr(stdscr, 1, 0, "-" * max_w)
 
-        # Логика адаптивного отображения модулей
         show_top = h >= 26 and max_w >= 50
         show_sysinfo = h >= 14
 
         list_start_y = 2
         cpu, ram_str, ram_pct, load_str, procs = sys_info_cache
-        
+
         if max_w >= 85:
             sys_info_text = L['sys_info'].format(cpu, ram_str, ram_pct, load_str, procs)
         elif max_w >= 50:
@@ -654,32 +688,26 @@ def main(stdscr):
             sys_info_text = f"C: {cpu}% R: {ram_pct}% L: {load_str.split()[0]}"
 
         if show_sysinfo and show_top:
-            stdscr.addstr(2, 2, sys_info_text[:max_w-4], curses.A_BOLD | curses.color_pair(3))
-            
+            safe_addstr(stdscr, 2, 2, sys_info_text[:max_w-4], curses.A_BOLD | curses.color_pair(3))
+
             top_title_dyn = L['top_title'].replace("TOP-5", f"TOP-{TOP_COUNT}")
-            stdscr.addstr(4, 2, top_title_dyn[:max_w-4], curses.A_BOLD | curses.color_pair(6))
+            safe_addstr(stdscr, 4, 2, top_title_dyn[:max_w-4], curses.A_BOLD | curses.color_pair(6))
             for idx, proc in enumerate(top_procs_cache):
                 attr = curses.color_pair(4) | curses.A_BOLD if idx == 0 else curses.color_pair(6)
-                stdscr.addstr(5 + idx, 4, proc[:max_w-8], attr)
-            
-            stdscr.addstr(5 + len(top_procs_cache), 0, "-" * max_w)
+                safe_addstr(stdscr, 5 + idx, 4, proc[:max_w-8], attr)
+
+            safe_addstr(stdscr, 5 + len(top_procs_cache), 0, "-" * max_w)
             list_start_y = 6 + len(top_procs_cache)
         elif show_sysinfo:
-            stdscr.addstr(2, 2, sys_info_text[:max_w-4], curses.A_BOLD | curses.color_pair(3))
-            stdscr.addstr(3, 0, "-" * max_w)
+            safe_addstr(stdscr, 2, 2, sys_info_text[:max_w-4], curses.A_BOLD | curses.color_pair(3))
+            safe_addstr(stdscr, 3, 0, "-" * max_w)
             list_start_y = 4
 
-        # --- НОВАЯ СИСТЕМА ДИНАМИЧЕСКИХ КОЛОНОК ---
-        # Минимально комфортная ширина колонки (символов)
-        MIN_COL_W = 40 
-        
-        # Считаем, сколько таких колонок поместится в текущую ширину
+        MIN_COL_W = 40
         col_count = max(1, max_w // MIN_COL_W)
-        col_count = min(4, col_count) # Ограничим максимум 4, чтобы не рябило на сверхшироких экранах
-        
+        col_count = min(4, col_count)
         col_w = max_w // col_count
 
-        # Высчитываем внутренние отступы внутри колонки
         if col_w < 55:
             status_w = 10
             rl_w = 0
@@ -693,17 +721,15 @@ def main(stdscr):
         if rl_w > 0:
             header_str += f" {L['col_autorun'].ljust(rl_w)}"
 
-        # Отрисовка заголовков для каждой колонки
         for c in range(col_count):
             x_pos = 2 + c * col_w
             if x_pos < max_w:
                 avail_w = min(col_w - 2, max_w - x_pos)
                 if avail_w > 0:
-                    stdscr.addstr(list_start_y, x_pos, header_str[:avail_w], curses.A_BOLD)
+                    safe_addstr(stdscr, list_start_y, x_pos, header_str[:avail_w], curses.A_BOLD)
 
-        stdscr.addstr(list_start_y + 1, 0, "-" * max_w)
+        safe_addstr(stdscr, list_start_y + 1, 0, "-" * max_w)
 
-        # Расчет размеров лог-окна
         if h >= 30: log_lines_count = 8
         elif h >= 22: log_lines_count = 5
         elif h >= 15: log_lines_count = 3
@@ -717,16 +743,14 @@ def main(stdscr):
         current_page = sel_idx // items_per_page if items_per_page > 0 else 0
         scroll_offset = current_page * items_per_page
 
-        # Отрисовка сервисов (матричная система)
         for i in range(items_per_page):
             idx = scroll_offset + i
             if idx >= len(display_services): break
             svc = display_services[idx]
 
-            # Исправленный расчет координат для сетки (ранее был баг if col_count == 2)
             row_idx = i % list_h
-            col_idx = i // list_h 
-            
+            col_idx = i // list_h
+
             y = actual_list_start + row_idx
             x_offset = col_idx * col_w
 
@@ -771,48 +795,44 @@ def main(stdscr):
             rl_x = status_x + status_w + 1
 
             if idx == sel_idx:
-                stdscr.addstr(y, x_offset, " " * (col_w - 1), curses.color_pair(4) | curses.A_REVERSE)
+                safe_addstr(stdscr, y, x_offset, " " * (col_w - 1), curses.color_pair(4) | curses.A_REVERSE)
                 safe_name = f"{prefix} {svc['name']}"[:name_w]
-                stdscr.addstr(y, x_offset + 2, safe_name.ljust(name_w), curses.color_pair(4) | curses.A_REVERSE | curses.A_BOLD)
-                stdscr.addstr(y, status_x, safe_status.ljust(status_w), curses.color_pair(4) | curses.A_REVERSE)
+                safe_addstr(stdscr, y, x_offset + 2, safe_name.ljust(name_w), curses.color_pair(4) | curses.A_REVERSE | curses.A_BOLD)
+                safe_addstr(stdscr, y, status_x, safe_status.ljust(status_w), curses.color_pair(4) | curses.A_REVERSE)
                 if rl_w > 0:
-                    stdscr.addstr(y, rl_x, safe_runlevel.ljust(rl_w), curses.color_pair(4) | curses.A_REVERSE)
+                    safe_addstr(stdscr, y, rl_x, safe_runlevel.ljust(rl_w), curses.color_pair(4) | curses.A_REVERSE)
             else:
-                stdscr.addstr(y, x_offset + 2, prefix, prefix_color)
+                safe_addstr(stdscr, y, x_offset + 2, prefix, prefix_color)
                 space_left = max(0, name_w - len(prefix) - 1)
                 safe_name_only = svc['name'][:space_left]
-                stdscr.addstr(y, name_x, safe_name_only.ljust(space_left), name_color)
-                stdscr.addstr(y, status_x, safe_status.ljust(status_w), status_color | curses.A_BOLD)
+                safe_addstr(stdscr, y, name_x, safe_name_only.ljust(space_left), name_color)
+                safe_addstr(stdscr, y, status_x, safe_status.ljust(status_w), status_color | curses.A_BOLD)
                 if rl_w > 0:
-                    stdscr.addstr(y, rl_x, safe_runlevel[:rl_w], curses.color_pair(3))
+                    safe_addstr(stdscr, y, rl_x, safe_runlevel[:rl_w], curses.color_pair(3))
 
-        # Окно логов
-        stdscr.addstr(h - bottom_h, 0, "-" * max_w)
+        safe_addstr(stdscr, h - bottom_h, 0, "-" * max_w)
         bl_ind = f" ({L['shown']})" if show_blacklist else ""
-        stdscr.addstr(h - bottom_h + 1, 2, (L['log_title'] + bl_ind)[:max_w-4], curses.A_BOLD | curses.color_pair(6))
+        safe_addstr(stdscr, h - bottom_h + 1, 2, (L['log_title'] + bl_ind)[:max_w-4], curses.A_BOLD | curses.color_pair(6))
 
         for idx, log_msg in enumerate(log_messages[-log_lines_count:]):
             draw_colorized_log(stdscr, h - bottom_h + 2 + idx, 2, log_msg, max_w)
 
-        # Подсказки и строка поиска
-        try:
-            if in_search:
-                prompt = f"{L['search_prompt']} {search_query}█"
-                stdscr.addstr(h - 1, 0, prompt[:max_w].ljust(max_w), curses.color_pair(4) | curses.A_REVERSE | curses.A_BOLD)
+        if in_search:
+            prompt = f"{L['search_prompt']} {search_query}█"
+            safe_addstr(stdscr, h - 1, 0, prompt[:max_w].ljust(max_w), curses.color_pair(4) | curses.A_REVERSE | curses.A_BOLD)
+        else:
+            if search_query:
+                hint = f"{L['search_prompt']} '{search_query}' " + L['bottom_hint']
+                safe_addstr(stdscr, h - 1, 0, hint[:max_w].center(max_w), curses.color_pair(4))
             else:
-                if search_query:
-                    hint = f"{L['search_prompt']} '{search_query}' " + L['bottom_hint']
-                    stdscr.addstr(h - 1, 0, hint[:max_w].center(max_w), curses.color_pair(4))
-                else:
-                    stdscr.addstr(h - 1, 0, L['bottom_hint'][:max_w].center(max_w), curses.color_pair(4))
-        except curses.error: pass
+                safe_addstr(stdscr, h - 1, 0, L['bottom_hint'][:max_w].center(max_w), curses.color_pair(4))
 
         stdscr.refresh()
 
         if pending_action:
             if pending_action == "CMD":
                 is_crit = False
-                if any(act in pending_payload for act in [" stop", " restart", " zap"]):
+                if any(act in pending_payload for act in [" stop", " zap"]):
                     parts = pending_payload.split()
                     svc_name = parts[2] if "rc-update" in pending_payload else os.path.basename(parts[0])
                     if svc_name in CRITICAL_SERVICES or svc_name.startswith("net."):
@@ -841,7 +861,10 @@ def main(stdscr):
             services = get_services(favs, bl_set, prio_dict, show_blacklist)
             continue
 
-        key = stdscr.getch()
+        try:
+            key = stdscr.get_wch()
+        except curses.error:
+            key = -1
 
         current_time = time.time()
         if current_time - last_top_update > 2.0:
@@ -851,42 +874,44 @@ def main(stdscr):
 
         if key == -1: continue
 
-        # --- Обработка ввода (Поиск) ---
+        is_enter = (isinstance(key, str) and key in ('\n', '\r')) or (isinstance(key, int) and key in (curses.KEY_ENTER, 10, 13))
+        is_esc = (isinstance(key, str) and key == '\x1b') or (isinstance(key, int) and key == 27)
+        is_bs = (isinstance(key, str) and key in ('\b', '\x7f')) or (isinstance(key, int) and key in (curses.KEY_BACKSPACE, 127, 8))
+
         if in_search:
-            if key == 27:
+            if is_esc:
                 in_search = False
                 search_query = ""
                 sel_idx = 0
-            elif key in (10, 13):
+            elif is_enter:
                 in_search = False
-            elif key in (curses.KEY_BACKSPACE, 127, 8):
+            elif is_bs:
                 search_query = search_query[:-1]
                 sel_idx = 0
-            elif 32 <= key <= 126:
-                search_query += chr(key)
+            elif isinstance(key, str) and key.isprintable():
+                search_query += key
                 sel_idx = 0
             continue
         else:
-            if key == ord('/'):
+            if isinstance(key, str) and key == '/':
                 in_search = True
                 continue
 
-        # --- Основная обработка горячих клавиш ---
-        if key in (ord('q'), ord('Q'), curses.KEY_F10): break
-        elif key == curses.KEY_UP and sel_idx > 0: sel_idx -= 1
-        elif key == curses.KEY_DOWN and sel_idx < len(display_services) - 1: sel_idx += 1
-        elif key == curses.KEY_NPAGE: sel_idx = min(len(display_services) - 1, sel_idx + 5)
-        elif key == curses.KEY_PPAGE: sel_idx = max(0, sel_idx - 5)
+        if (isinstance(key, str) and key.lower() in ('q', 'й')) or (isinstance(key, int) and key == curses.KEY_F10): break
+        elif isinstance(key, int) and key == curses.KEY_UP and sel_idx > 0: sel_idx -= 1
+        elif isinstance(key, int) and key == curses.KEY_DOWN and sel_idx < len(display_services) - 1: sel_idx += 1
+        elif isinstance(key, int) and key == curses.KEY_NPAGE: sel_idx = min(len(display_services) - 1, sel_idx + 5)
+        elif isinstance(key, int) and key == curses.KEY_PPAGE: sel_idx = max(0, sel_idx - 5)
 
-        elif key in (ord('r'), ord('R')):
+        elif isinstance(key, str) and key.lower() in ('r', 'к'):
             add_log(L['msg_refresh'])
             services = get_services(favs, bl_set, prio_dict, show_blacklist)
 
-        elif key in (ord('i'), ord('I')):
+        elif isinstance(key, str) and key.lower() in ('i', 'ш'):
             if display_services:
                 show_info_panel(stdscr, display_services[sel_idx])
 
-        elif key in (ord('g'), ord('G')):
+        elif isinstance(key, str) and key.lower() in ('g', 'п'):
             current_code = L.get("current_lang_code", "ru")
             new_lang = "en" if current_code == "ru" else "ru"
             full_data = get_dict(LANG_FILE) if os.path.exists(LANG_FILE) else DEFAULT_LANG_DATA.copy()
@@ -896,14 +921,14 @@ def main(stdscr):
             msg = L.get(f'msg_lang_{new_lang}', f'Language switched to {new_lang}')
             add_log(msg)
 
-        elif key in (ord('l'), ord('L')):
+        elif isinstance(key, str) and key.lower() in ('l', 'д'):
             show_blacklist = not show_blacklist
             status_txt = L['shown'] if show_blacklist else L['hidden']
             add_log(L['msg_bl_mode'].format(status_txt))
             services = get_services(favs, bl_set, prio_dict, show_blacklist)
             sel_idx = min(sel_idx, max(0, len(services) - 1))
 
-        elif key in (ord('b'), ord('B')):
+        elif isinstance(key, str) and key.lower() in ('b', 'и'):
             if display_services:
                 svc_name = display_services[sel_idx]['name']
                 if svc_name in bl_set: bl_set.discard(svc_name)
@@ -912,7 +937,7 @@ def main(stdscr):
                 add_log(L['msg_bl'].format(svc_name))
                 services = get_services(favs, bl_set, prio_dict, show_blacklist)
 
-        elif key in (ord('p'), ord('P')):
+        elif isinstance(key, str) and key.lower() in ('p', 'з'):
             if display_services:
                 svc_name = display_services[sel_idx]['name']
                 curr_prio = prio_dict.get(svc_name, 0)
@@ -925,7 +950,7 @@ def main(stdscr):
                 add_log(L['msg_prio'].format(svc_name))
                 services = get_services(favs, bl_set, prio_dict, show_blacklist)
 
-        elif key in (ord('f'), ord('F')):
+        elif isinstance(key, str) and key.lower() in ('f', 'а'):
             if display_services:
                 svc_name = display_services[sel_idx]['name']
                 if svc_name in favs: favs.discard(svc_name)
@@ -934,13 +959,13 @@ def main(stdscr):
                 add_log(L['msg_fav'].format(svc_name))
                 services = get_services(favs, bl_set, prio_dict, show_blacklist)
 
-        elif key in [curses.KEY_ENTER, 10, 13]:
+        elif is_enter:
             if not display_services: continue
             action_type, payload = show_action_menu(stdscr, display_services[sel_idx])
             if action_type in ("CMD", "PID"):
                 pending_action, pending_payload = action_type, payload
 
-        elif key == curses.KEY_MOUSE:
+        elif isinstance(key, int) and key == curses.KEY_MOUSE:
             try:
                 _, mx, my, _, bstate = curses.getmouse()
 
@@ -952,7 +977,6 @@ def main(stdscr):
                     row = my - actual_list_start
                     col = mx // col_w
                     if col < col_count:
-                        # Фикс: мышь теперь правильно понимает любую колонку
                         clicked_idx = scroll_offset + (col * list_h) + row
                         if clicked_idx < len(display_services):
                             if sel_idx != clicked_idx:
