@@ -48,3 +48,6 @@ F10 / Q — Выход
 Система с OpenRC.
 
 psutil (опционально, для более точного мониторинга ресурсов; если отсутствует, используется стандартный fallback через /proc/).
+
+
+![ServiceTop Interface](servicetop_show_blocklist.png)
