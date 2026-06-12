@@ -56,7 +56,7 @@ if os.geteuid() != 0:
 os.makedirs(BASE_DIR, exist_ok=True)
 
 DEFAULT_LANG_DATA = {
-    "current_lang": "ru",
+    "current_lang": "en",
     "ru": {
         "title": " Servicetop (Gentoo/OpenRC) ",
         "top_title": " TOP-5 ПРОЦЕССОВ: ",
@@ -183,7 +183,7 @@ def load_language():
                 json.dump(DEFAULT_LANG_DATA, f, indent=4, ensure_ascii=False)
         except Exception as e:
             log_messages.append(f"Error creating lang.json: {e}")
-        L = DEFAULT_LANG_DATA["ru"].copy()
+        L = DEFAULT_LANG_DATA["en"].copy()
         L["current_lang_code"] = "en"
         return L
     try:
