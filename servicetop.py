@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ========================================================================
-   Servicetop OpenRC Manager v3.5 (Grid Edition)
+   Servicetop OpenRC Manager v3.6 RC (Optimized Edition)
    Repository: https://github.com/PEAKT0P/servicetop.py
 ========================================================================
     Update/Install:
@@ -23,6 +23,8 @@ import sys
 import json
 import re
 import time
+import shlex
+import shutil
 
 try:
     import psutil
@@ -40,8 +42,8 @@ BLACKLIST_FILE = os.path.join(BASE_DIR, "blacklist.list")
 PRIO_FILE = os.path.join(BASE_DIR, "priority.json")
 LANG_FILE = os.path.join(BASE_DIR, "lang.json")
 
-# Регулярки для раскраски логов и очистки
-TOKEN_RE = re.compile(r'(\[\s*ok\s*\]|\[\s*!!\s*\]|\[\s*fail\s*\]|Ошибка:|Успешно:|Выполняю:|\s\*\s)')
+# Регулярки для раскраски логов и очистки (добавлены английские версии)
+TOKEN_RE = re.compile(r'(\[\s*ok\s*\]|\[\s*!!\s*\]|\[\s*fail\s*\]|Ошибка:|Успешно:|Выполняю:|Error:|Success:|Executing:|\s\*\s)')
 ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
 MAX_LOG_LINES = 500
@@ -75,6 +77,8 @@ DEFAULT_LANG_DATA = {
         "msg_welcome": "Добро пожаловать в ServiceTop! Сбор данных завершен.",
         "msg_refresh": "Обновление списка сервисов...",
         "msg_exec": "Выполняю: {}",
+        "msg_success": "Успешно: {}",
+        "msg_error": "Ошибка: {}",
         "msg_pid_del": "PID файлы для {} удалены.",
         "msg_fav": "Статус Избранного для {} изменен.",
         "msg_bl": "Статус Blacklist для {} изменен.",
@@ -83,7 +87,7 @@ DEFAULT_LANG_DATA = {
         "err_small": "Окно терминала слишком маленькое!",
         "search_prompt": "Поиск:",
         "msg_lang_ru": "Язык переключен на Русский",
-        "msg_lang_en": "Язык переключен на English",
+        "msg_lang_en": "Language switched to English",
         "warn_title": " ВНИМАНИЕ ",
         "warn_crit": "Отключение критического сервиса может\nнарушить работу системы.\nПродолжить?",
         "btn_yes": "[Y/Д] Да",
@@ -96,6 +100,11 @@ DEFAULT_LANG_DATA = {
         "info_prio": "Приоритет: {}",
         "info_pid": "PID: {}",
         "info_uptime": "Uptime: {}",
+        "info_cpu": "CPU процесса: {}",
+        "info_mem": "Память процесса: {}",
+        "info_path": "Путь к скрипту: {}",
+        "info_deps": "Зависимости: {}",
+        "info_desc": "Описание: {}",
         "prio_high": "Высокий",
         "prio_norm": "Обычный",
         "prio_low": "Низкий",
@@ -125,6 +134,8 @@ DEFAULT_LANG_DATA = {
         "msg_welcome": "Welcome to ServiceTop! Data collection completed.",
         "msg_refresh": "Refreshing service list...",
         "msg_exec": "Executing: {}",
+        "msg_success": "Success: {}",
+        "msg_error": "Error: {}",
         "msg_pid_del": "PID files for {} have been removed.",
         "msg_fav": "Favorite status for {} has been changed.",
         "msg_bl": "Blacklist status for {} has been changed.",
@@ -146,6 +157,11 @@ DEFAULT_LANG_DATA = {
         "info_prio": "Priority: {}",
         "info_pid": "PID: {}",
         "info_uptime": "Uptime: {}",
+        "info_cpu": "Process CPU: {}",
+        "info_mem": "Process Memory: {}",
+        "info_path": "Script Path: {}",
+        "info_deps": "Dependencies: {}",
+        "info_desc": "Description: {}",
         "prio_high": "High",
         "prio_norm": "Normal",
         "prio_low": "Low",
@@ -165,20 +181,22 @@ def load_language():
         try:
             with open(LANG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(DEFAULT_LANG_DATA, f, indent=4, ensure_ascii=False)
-        except: pass
+        except Exception as e:
+            log_messages.append(f"Error creating lang.json: {e}")
         L = DEFAULT_LANG_DATA["ru"].copy()
-        L["current_lang_code"] = "ru"
+        L["current_lang_code"] = "en"
         return L
     try:
         with open(LANG_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            lang = data.get("current_lang", "ru")
+            lang = data.get("current_lang", "en")
             L = data.get(lang, DEFAULT_LANG_DATA["ru"]).copy()
             L["current_lang_code"] = lang
             return L
-    except:
-        L = DEFAULT_LANG_DATA["ru"].copy()
-        L["current_lang_code"] = "ru"
+    except Exception as e:
+        log_messages.append(f"Error reading lang.json: {e}")
+        L = DEFAULT_LANG_DATA["en"].copy()
+        L["current_lang_code"] = "en"
         return L
 
 load_language()
@@ -206,24 +224,30 @@ def get_list(filepath):
     try:
         with open(filepath, 'r') as f:
             return set(line.strip() for line in f if line.strip())
-    except: return set()
+    except Exception as e:
+        log_messages.append(f"Error reading list {filepath}: {e}")
+        return set()
 
 def save_list(filepath, items):
     try:
         with open(filepath, 'w') as f:
             for item in sorted(list(items)): f.write(f"{item}\n")
-    except: pass
+    except Exception as e:
+        log_messages.append(f"Error saving list {filepath}: {e}")
 
 def get_dict(filepath):
     if not os.path.exists(filepath): return {}
     try:
         with open(filepath, 'r') as f: return json.load(f)
-    except: return {}
+    except Exception as e:
+        log_messages.append(f"Error reading dict {filepath}: {e}")
+        return {}
 
 def save_dict(filepath, data):
     try:
         with open(filepath, 'w') as f: json.dump(data, f, indent=4)
-    except: pass
+    except Exception as e:
+        log_messages.append(f"Error saving dict {filepath}: {e}")
 
 def get_sys_info():
     if HAS_PSUTIL:
@@ -263,7 +287,7 @@ def get_sys_info():
 
 def get_top_processes():
     try:
-        out = subprocess.getoutput(f"ps -eo pid,pcpu,pmem,comm --sort=-pcpu | head -n {TOP_COUNT + 1}").strip().split('\n')
+        out = subprocess.getoutput("ps -eo pid,pcpu,pmem,comm --sort=-pcpu | head -n " + str(TOP_COUNT + 1)).strip().split('\n')
         formatted = []
         formatted.append(f"{'PID'.ljust(8)} {'CPU%'.ljust(7)} {'MEM%'.ljust(7)} {'PROCESS'}")
         if len(out) > 1:
@@ -274,6 +298,32 @@ def get_top_processes():
         return formatted
     except:
         return []
+
+def find_service_pid(svc_name):
+    paths = [
+        f"/run/openrc/daemons/{svc_name}/pid",
+        f"/run/{svc_name}.pid",
+        f"/var/run/{svc_name}.pid",
+        f"/run/{svc_name}/{svc_name}.pid",
+        f"/var/run/{svc_name}/{svc_name}.pid"
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            try:
+                with open(p, 'r') as f:
+                    pid_str = f.read().strip()
+                    if pid_str.isdigit(): return pid_str
+            except: pass
+
+    out = subprocess.getoutput(f"pidof {svc_name}").split()
+    if out and out[0].isdigit(): return out[0]
+
+    if HAS_PSUTIL:
+        for proc in psutil.process_iter(['pid', 'name']):
+            try:
+                if proc.info['name'] == svc_name: return str(proc.info['pid'])
+            except (psutil.NoSuchProcess, psutil.AccessDenied): pass
+    return "N/A"
 
 def get_services(favs, bl_set, prio_dict, show_blacklist):
     services = []
@@ -325,13 +375,18 @@ def fix_openrc_logs(text):
 
 def execute_command(cmd):
     try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
+        if isinstance(cmd, str):
+            args = shlex.split(cmd)
+        else:
+            args = cmd
+        result = subprocess.run(args, capture_output=True, text=True, timeout=15)
         output = result.stdout.strip() + " " + result.stderr.strip()
         output = ANSI_ESCAPE.sub('', output)
         output = fix_openrc_logs(output)
-        return output if output else f"Успешно: {cmd}"
+        success_prefix = L.get('msg_success', 'Success: {}').format(' '.join(args))
+        return output if output.strip() else success_prefix
     except Exception as e:
-        return f"Ошибка: {e}"
+        return L.get('msg_error', 'Error: {}').format(e)
 
 def draw_colorized_log(stdscr, y, x, msg, max_w):
     safe_msg = msg.replace('\n', '  ')
@@ -343,9 +398,9 @@ def draw_colorized_log(stdscr, y, x, msg, max_w):
     for token in tokens:
         if not token: continue
         attr = curses.color_pair(6)
-        if re.fullmatch(r'\[\s*ok\s*\]|Успешно:|\s\*\s', token): attr = curses.color_pair(1) | curses.A_BOLD
-        elif re.fullmatch(r'\[\s*!!\s*\]|\[\s*fail\s*\]|Ошибка:', token): attr = curses.color_pair(2) | curses.A_BOLD
-        elif re.fullmatch(r'Выполняю:', token): attr = curses.color_pair(4) | curses.A_BOLD
+        if re.fullmatch(r'\[\s*ok\s*\]|Успешно:|Success:|\s\*\s', token): attr = curses.color_pair(1) | curses.A_BOLD
+        elif re.fullmatch(r'\[\s*!!\s*\]|\[\s*fail\s*\]|Ошибка:|Error:', token): attr = curses.color_pair(2) | curses.A_BOLD
+        elif re.fullmatch(r'Выполняю:|Executing:', token): attr = curses.color_pair(4) | curses.A_BOLD
 
         try:
             stdscr.addstr(y, curr_x, token, attr)
@@ -395,39 +450,63 @@ def show_confirm_dialog(stdscr, svc_name):
 
 def show_info_panel(stdscr, svc):
     h, w = stdscr.getmaxyx()
-    dh = min(11, h - 2)
-    dw = min(40, w - 2)
+    dh = min(17, h - 2)
+    dw = min(65, w - 2)
     dy, dx = max(0, (h - dh) // 2), max(0, (w - dw) // 2)
 
     win = curses.newwin(dh, dw, dy, dx)
     win.keypad(True)
     win.bkgd(' ', curses.color_pair(5))
 
-    pid = "N/A"
+    svc_name = svc['name']
+    pid = find_service_pid(svc_name)
     uptime = "N/A"
-    try:
-        pid_file = f"/run/{svc['name']}.pid"
-        if not os.path.exists(pid_file):
-            pid_file = f"/var/run/{svc['name']}.pid"
-        if os.path.exists(pid_file):
-            with open(pid_file, 'r') as f:
-                pid = f.read().strip()
-        else:
-            out = subprocess.getoutput(f"pidof {svc['name']}").split()
-            if out: pid = out[0]
+    p_cpu = "N/A"
+    p_mem = "N/A"
 
-        if pid != "N/A" and pid.isdigit():
-            ut_out = subprocess.getoutput(f"ps -p {pid} -o etime=")
-            if ut_out and not ut_out.startswith('ps'):
-                uptime = ut_out.strip()
-    except: pass
+    if pid != "N/A" and pid.isdigit():
+        ut_out = subprocess.getoutput(f"ps -p {pid} -o etime=")
+        if ut_out and not ut_out.startswith('ps'):
+            uptime = ut_out.strip()
+
+        if HAS_PSUTIL:
+            try:
+                p = psutil.Process(int(pid))
+                p.cpu_percent(interval=None)
+                time.sleep(0.1)
+                p_cpu = f"{p.cpu_percent(interval=None)}%"
+                p_mem = f"{p.memory_info().rss / 1024 / 1024:.1f} MB"
+            except: pass
+
+        if p_cpu == "N/A":
+            ps_out = subprocess.getoutput(f"ps -p {pid} -o %cpu,%mem,rss= 2>/dev/null").strip().splitlines()
+            if len(ps_out) > 1:
+                parts = ps_out[1].split()
+                if len(parts) >= 3:
+                    p_cpu = f"{parts[0]}%"
+                    p_mem = f"{float(parts[2])/1024:.1f} MB"
 
     prio_map = {1: L['prio_high'], 0: L['prio_norm'], -1: L['prio_low']}
+    init_path = f"/etc/init.d/{svc_name}"
+
+    desc = subprocess.getoutput(f"{init_path} describe 2>/dev/null").strip()
+    if not desc or "unknown" in desc.lower() or desc.startswith("Usage:"):
+        try:
+            with open(init_path, "r", encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    if "description=" in line:
+                        desc = line.split("description=")[1].strip().strip('"').strip("'")
+                        break
+        except: pass
+    if not desc or desc.startswith("Usage:"): desc = "-"
+
+    depend_out = subprocess.getoutput(f"{init_path} depend 2>/dev/null").strip()
+    deps = " | ".join(depend_out.splitlines()) if depend_out else "-"
 
     while True:
         win.erase()
         win.box()
-        safe_addstr(win, 1, 2, L['info_title'].format(svc['name'])[:dw-4], curses.A_BOLD)
+        safe_addstr(win, 1, 2, L['info_title'].format(svc_name)[:dw-4], curses.A_BOLD)
         safe_addstr(win, 2, 2, "="*(dw-4))
 
         info_lines = [
@@ -437,7 +516,12 @@ def show_info_panel(stdscr, svc):
             L['info_bl'].format(L['yes'] if svc['is_bl'] else L['no']),
             L['info_prio'].format(prio_map.get(svc['priority'], L['prio_norm'])),
             L['info_pid'].format(pid),
-            L['info_uptime'].format(uptime)
+            L['info_uptime'].format(uptime),
+            L.get('info_cpu', 'Process CPU: {}').format(p_cpu),
+            L.get('info_mem', 'Process Memory: {}').format(p_mem),
+            L.get('info_path', 'Script Path: {}').format(init_path),
+            L.get('info_desc', 'Description: {}').format(desc),
+            L.get('info_deps', 'Dependencies: {}').format(deps)
         ]
 
         for i, text in enumerate(info_lines):
@@ -654,7 +738,9 @@ def main(stdscr):
         "sshd", "network", "netmount", "net.lo", "net.br0",
         "iptables", "iptables-manager", "nftables", "ufw", "firewalld",
         "dnsmasq", "docker", "containerd", "tailscaled", "kubelet",
-        "podman", "libvirtd", "keepalived", "bird", "wireguard", "wg-quick"
+        "podman", "libvirtd", "keepalived", "bird", "wireguard", "wg-quick",
+        "dbus", "elogind", "syslog-ng", "rsyslog", "chronyd", "ntpd",
+        "udev", "udev-trigger", "devfs", "localmount", "root", "sysfs"
     ]
 
     while True:
@@ -832,8 +918,6 @@ def main(stdscr):
         if pending_action:
             if pending_action == "CMD":
                 is_crit = False
-
-                # Проверяем, является ли действие опасным (stop, zap или удаление из автозапуска)
                 is_dangerous_cmd = (
                     any(act in pending_payload for act in [" stop", " zap"]) or
                     pending_payload.startswith("rc-update del")
@@ -841,10 +925,15 @@ def main(stdscr):
 
                 if is_dangerous_cmd:
                     parts = pending_payload.split()
-                    # Для rc-update имя сервиса идет 3-м аргументом, для /etc/init.d/ - 1-м
-                    svc_name = parts[2] if "rc-update" in pending_payload else os.path.basename(parts[0])
+                    svc_name = ""
+                    if "rc-update" in pending_payload:
+                        if len(parts) > 2:
+                            svc_name = parts[2]
+                    else:
+                        if len(parts) > 0:
+                            svc_name = os.path.basename(parts[0])
 
-                    if svc_name in CRITICAL_SERVICES or svc_name.startswith("net."):
+                    if svc_name and (svc_name in CRITICAL_SERVICES or svc_name.startswith("net.")):
                         is_crit = True
 
                 if is_crit:
@@ -857,13 +946,34 @@ def main(stdscr):
                 res = execute_command(pending_payload)
                 add_log(res)
             elif pending_action == "PID":
-                cmds = [
-                    f"rm -f /run/{pending_payload}.pid",
-                    f"rm -f /var/run/{pending_payload}.pid",
-                    f"rm -rf /run/openrc/daemons/{pending_payload}"
+                removed_items = []
+                paths_to_remove = [
+                    f"/run/{pending_payload}.pid",
+                    f"/var/run/{pending_payload}.pid"
                 ]
-                execute_command("; ".join(cmds))
-                add_log(L['msg_pid_del'].format(pending_payload))
+                for p in paths_to_remove:
+                    if os.path.exists(p):
+                        try:
+                            os.remove(p)
+                            removed_items.append(p)
+                        except Exception as e:
+                            log_messages.append(f"Error removing {p}: {e}")
+
+                dir_to_remove = f"/run/openrc/daemons/{pending_payload}"
+                if os.path.exists(dir_to_remove):
+                    try:
+                        if os.path.isdir(dir_to_remove):
+                            shutil.rmtree(dir_to_remove)
+                        else:
+                            os.remove(dir_to_remove)
+                        removed_items.append(dir_to_remove)
+                    except Exception as e:
+                        log_messages.append(f"Error removing {dir_to_remove}: {e}")
+
+                if removed_items:
+                    add_log(L['msg_pid_del'].format(pending_payload) + f" ({', '.join(removed_items)})")
+                else:
+                    add_log(f"No PID files found for {pending_payload}.")
 
             pending_action = None
             pending_payload = None
@@ -921,8 +1031,8 @@ def main(stdscr):
                 show_info_panel(stdscr, display_services[sel_idx])
 
         elif isinstance(key, str) and key.lower() in ('g', 'п'):
-            current_code = L.get("current_lang_code", "ru")
-            new_lang = "en" if current_code == "ru" else "ru"
+            current_code = L.get("current_lang_code", "en")
+            new_lang = "ru" if current_code == "en" else "en"
             full_data = get_dict(LANG_FILE) if os.path.exists(LANG_FILE) else DEFAULT_LANG_DATA.copy()
             full_data["current_lang"] = new_lang
             save_dict(LANG_FILE, full_data)
